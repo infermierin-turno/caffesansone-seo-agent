@@ -8,7 +8,7 @@ class ShopifyCoffeeAgent:
         self.shop_url = shop_url.rstrip('/')
         self.ai_client = OpenAI(api_key=openai_api_key)
         
-        # Cerca il token direttamente nelle variabili d'ambiente (SHOPIFY_ACCESS_TOKEN) o nei parametri
+        # Recupera il token da qualsiasi variabile disponibile
         self.access_token = (
             access_token 
             or os.getenv("SHOPIFY_ACCESS_TOKEN") 
@@ -17,11 +17,21 @@ class ShopifyCoffeeAgent:
             or client_id
         )
         
-        # Se il token passato è un token di sessione o un access token diretto, lo usiamo direttamente negli header
-        self.headers = {
-            "Content-Type": "application/json",
-            "X-Shopify-Access-Token": self.access_token if self.access_token else ""
+        # Determina il corretto formato dell'header in base al tipo di token Shopify
+        token_str = str(self.access_token).strip() if self.access_token else ""
+        
+        headers = {
+            "Content-Type": "application/json"
         }
+        
+        if token_str.startswith("shpss_") or token_str.startswith("atkn_"):
+            # I token di sessione/app moderni (shpss, atkn) spesso richiedono il Bearer token o funzionano meglio con Authorization
+            headers["Authorization"] = f"Bearer {token_str}"
+        else:
+            # I token classici Admin API (shpat) usano X-Shopify-Access-Token
+            headers["X-Shopify-Access-Token"] = token_str
+
+        self.headers = headers
 
     def get_products(self, limit=50):
         """Recupera l'elenco dei prodotti con relative varianti tramite Shopify GraphQL Admin API."""
@@ -61,6 +71,10 @@ class ShopifyCoffeeAgent:
         
         if response.status_code == 200:
             data = response.json()
+            if "errors" in data:
+                print(f"[ERRORE] Errore restituito dall'API GraphQL di Shopify: {data['errors']}")
+                return []
+                
             edges = data.get("data", {}).get("products", {}).get("edges", [])
             products = []
             for edge in edges:
@@ -88,5 +102,5 @@ class ShopifyCoffeeAgent:
                 })
             return products
         else:
-            print(f"[ERRORE] Impossibile recuperare i prodotti via GraphQL: {response.text}")
+            print(f"[ERRORE] Comunicazione fallita con Shopify (Status {response.status_code}): {response.text}")
             return []

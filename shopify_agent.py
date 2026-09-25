@@ -3,27 +3,21 @@ import json
 import requests
 from fastapi import FastAPI, HTTPException, Request, Form
 from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.templating import Jinja2Templates
 from openai import OpenAI
 
 app = FastAPI()
-
-# Configurazione template (se usi una cartella templates o rispondi con HTML diretto)
-# templates = Jinja2Templates(directory="templates")
 
 class ShopifyCoffeeAgent:
     def __init__(self, shop_url, openai_api_key, client_id=None, client_secret=None, access_token=None, **kwargs):
         self.shop_url = shop_url.rstrip('/')
         self.ai_client = OpenAI(api_key=openai_api_key)
         
-        # Legge direttamente il token d'accesso dalle variabili d'ambiente o dai parametri
         self.access_token = (
             access_token 
             or os.getenv("SHOPIFY_ACCESS_TOKEN") 
             or os.getenv("SHOPIFY_ADMIN_ACCESS_TOKEN")
         )
         
-        # Se non trova un token diretto, usa il fallback sul client_secret
         if not self.access_token:
             self.client_id = client_id or os.getenv("SHOPIFY_CLIENT_ID") or os.getenv("SHOPIFY_API_KEY")
             self.client_secret = client_secret or os.getenv("SHOPIFY_CLIENT_SECRET") or os.getenv("SHOPIFY_SECRET") or os.getenv("SHOPIFY_API_SECRET")
@@ -35,14 +29,12 @@ class ShopifyCoffeeAgent:
         }
 
     def _get_admin_access_token(self):
-        """Metodo di fallback per la gestione del token."""
         if not self.client_id or not self.client_secret:
             print("[AVVISO] Client ID o Client Secret mancanti.")
             return None
         return self.client_secret
 
     def get_products(self, limit=50):
-        """Recupera l'elenco dei prodotti con relative varianti tramite Shopify GraphQL Admin API."""
         graphql_url = f"{self.shop_url}/admin/api/2024-07/graphql.json"
         
         query = f"""
@@ -110,7 +102,6 @@ class ShopifyCoffeeAgent:
             return []
 
     def get_pending_products(self, limit=3):
-        """Restituisce i primi N prodotti che non hanno il tag 'Ottimizzato IA'."""
         all_products = self.get_products(limit=50)
         pending = []
         for p in all_products:
@@ -127,7 +118,6 @@ class ShopifyCoffeeAgent:
         return pending
 
     def optimize_divise_content(self, product_data_or_title, current_body=None, variants=None):
-        """Gestisce la generazione dei contenuti tramite OpenAI."""
         if isinstance(product_data_or_title, dict):
             product_data = product_data_or_title
         else:
@@ -306,7 +296,7 @@ Varianti del prodotto:
             "media": media_inputs
         }
 
-        alt_resp = requests.post(graphql_url, json={"query": mutation_alt, "variables": variables}, headers=self.headers)
+        requests.post(graphql_url, json={"query": mutation_alt, "variables": variables}, headers=self.headers)
         return True
 
     def update_product_seo_and_description(self, product_id, seo_data, tag_to_add="Ottimizzato IA"):
@@ -412,7 +402,6 @@ Varianti del prodotto:
         else:
             return False
 
-# Istanziazione globale dell'agent usando le variabili d'ambiente
 shop_url = os.getenv("SHOP_URL", "https://caffesansone.it")
 openai_api_key = os.getenv("OPENAI_API_KEY", "")
 shopify_token = os.getenv("SHOPIFY_ACCESS_TOKEN", "")

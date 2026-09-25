@@ -168,11 +168,15 @@ def apply_howto_product(product_id: str):
     )
 
     if prod_resp.status_code != 200:
-        raise HTTPException(status_code=500, detail="Errore di comunicazione con l'API GraphQL di Shopify.")
+        raise HTTPException(status_code=500, detail=f"Errore di comunicazione con l'API GraphQL di Shopify: {prod_resp.text}")
 
-    prod_data = prod_resp.json().get("data", {}).get("product")
+    prod_resp_json = prod_resp.json()
+    if "errors" in prod_resp_json:
+        raise HTTPException(status_code=400, detail=f"Errore GraphQL Shopify: {prod_resp_json['errors']}")
+
+    prod_data = prod_resp_json.get("data", {}).get("product")
     if not prod_data:
-        raise HTTPException(status_code=404, detail="Prodotto non trovato su Shopify tramite GraphQL.")
+        raise HTTPException(status_code=404, detail=f"Prodotto non trovato su Shopify per il GID: {raw_gid}")
 
     title = prod_data.get("title", "Caffè Specialty")
     body_html = prod_data.get("descriptionHtml", "") or ""

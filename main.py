@@ -142,24 +142,45 @@ def read_root():
 
 @app.get("/apply-howto", response_class=HTMLResponse)
 def apply_howto_product(product_id: str):
-    clean_id = product_id.strip().split("/")[-1]
-    graphql_url = f"{agent.shop_url}/admin/api/2024-07/graphql.json"
-    
-    # 1. Recupera dati del prodotto da Shopify
-    rest_url = f"{agent.shop_url}/admin/api/2024-07/products/{clean_id}.json"
-    response = requests.get(rest_url, headers=agent.headers)
-    if response.status_code != 200:
-        raise HTTPException(status_code=404, detail="Prodotto non trovato su Shopify.")
-    
-    product_data = response.json().get("product", {})
-    raw_gid = f"gid://shopify/Product/{clean_id}"
-    title = product_data.get("title", "Caffè Specialty")
-    body_html = product_data.get("body_html", "") or ""
+    clean_input = product_id.strip()
+    if not clean_input.startswith("gid://"):
+        numeric_id = clean_input.split("/")[-1]
+        raw_gid = f"gid://shopify/Product/{numeric_id}"
+    else:
+        raw_gid = clean_input
 
-    # 2. Genera il HowTo tramite IA
+    graphql_url = f"{agent.shop_url}/admin/api/2024-07/graphql.json"
+
+    # Recupera dati del prodotto tramite GraphQL
+    product_query = """
+    query getProduct($id: ID!) {
+      product(id: $id) {
+        id
+        title
+        descriptionHtml
+      }
+    }
+    """
+    prod_resp = requests.post(
+        graphql_url,
+        json={"query": product_query, "variables": {"id": raw_gid}},
+        headers=agent.headers
+    )
+
+    if prod_resp.status_code != 200:
+        raise HTTPException(status_code=500, detail="Errore di comunicazione con l'API GraphQL di Shopify.")
+
+    prod_data = prod_resp.json().get("data", {}).get("product")
+    if not prod_data:
+        raise HTTPException(status_code=404, detail="Prodotto non trovato su Shopify tramite GraphQL.")
+
+    title = prod_data.get("title", "Caffè Specialty")
+    body_html = prod_data.get("descriptionHtml", "") or ""
+
+    # Genera il HowTo tramite IA
     howto_json_str = generate_howto_json(title, body_html)
 
-    # 3. Salva nel metafield custom.howto_schema tramite GraphQL
+    # Salva nel metafield custom.howto_schema tramite GraphQL
     metafield_mutation = """
     mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
       metafieldsSet(metafields: $metafields) {
@@ -188,7 +209,7 @@ def apply_howto_product(product_id: str):
 
     meta_resp = requests.post(graphql_url, json={"query": metafield_mutation, "variables": variables}, headers=agent.headers)
     if meta_resp.status_code != 200:
-        raise HTTPException(status_code=500, detail="Errore di comunicazione con l'API GraphQL di Shopify.")
+        raise HTTPException(status_code=500, detail="Errore di comunicazione con l'API GraphQL per il salvataggio.")
     
     meta_data = meta_resp.json()
     errors = meta_data.get("data", {}).get("metafieldsSet", {}).get("userErrors", [])

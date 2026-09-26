@@ -9,7 +9,7 @@ from shopify_agent import ShopifyCoffeeAgent
 
 app = FastAPI(title="Caffè Sansone - HowTo SEO Agent")
 
-shop_url = os.getenv("SHOP_URL") or "https://caffesansone.it"
+shop_url = os.getenv("SHOP_URL") or "https://348aca-2.myshopify.com"
 openai_api_key = os.getenv("OPENAI_API_KEY")
 client_id = os.getenv("SHOPIFY_CLIENT_ID")
 client_secret = os.getenv("SHOPIFY_CLIENT_SECRET")

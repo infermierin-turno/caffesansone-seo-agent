@@ -16,6 +16,7 @@ class ShopifyCoffeeAgent:
             access_token 
             or os.getenv("SHOPIFY_ACCESS_TOKEN") 
             or os.getenv("SHOPIFY_ADMIN_ACCESS_TOKEN")
+            or os.getenv("SHOPIFY_SESSION_TOKEN")
         )
         
         if not self.access_token:
@@ -29,10 +30,13 @@ class ShopifyCoffeeAgent:
         }
 
     def _get_admin_access_token(self):
-        # Se non c'è un token esatto nelle variabili d'ambiente, verifica se è stato impostato SHOPIFY_ACCESS_TOKEN direttamente
-        token = os.getenv("SHOPIFY_ACCESS_TOKEN") or os.getenv("SHOPIFY_ADMIN_ACCESS_TOKEN")
+        token = (
+            os.getenv("SHOPIFY_ACCESS_TOKEN") 
+            or os.getenv("SHOPIFY_ADMIN_ACCESS_TOKEN")
+            or os.getenv("SHOPIFY_SESSION_TOKEN")
+        )
         if not token:
-            print("[AVVISO] Nessun Admin Access Token valido trovato nelle variabili d'ambiente.")
+            print("[AVVISO] Nessun Token valido trovato nelle variabili d'ambiente.")
         return token
 
     def get_products(self, limit=50):

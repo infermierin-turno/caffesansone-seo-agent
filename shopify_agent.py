@@ -29,10 +29,11 @@ class ShopifyCoffeeAgent:
         }
 
     def _get_admin_access_token(self):
-        if not self.client_id or not self.client_secret:
-            print("[AVVISO] Client ID o Client Secret mancanti.")
-            return None
-        return self.client_secret
+        # Se non c'è un token esatto nelle variabili d'ambiente, verifica se è stato impostato SHOPIFY_ACCESS_TOKEN direttamente
+        token = os.getenv("SHOPIFY_ACCESS_TOKEN") or os.getenv("SHOPIFY_ADMIN_ACCESS_TOKEN")
+        if not token:
+            print("[AVVISO] Nessun Admin Access Token valido trovato nelle variabili d'ambiente.")
+        return token
 
     def get_products(self, limit=50):
         graphql_url = f"{self.shop_url}/admin/api/2024-07/graphql.json"
@@ -402,7 +403,7 @@ Varianti del prodotto:
         else:
             return False
 
-shop_url = os.getenv("SHOP_URL", "https://caffesansone.it")
+shop_url = os.getenv("SHOP_URL", "https://348aca-2.myshopify.com")
 openai_api_key = os.getenv("OPENAI_API_KEY", "")
 shopify_token = os.getenv("SHOPIFY_ACCESS_TOKEN", "")
 

@@ -139,7 +139,7 @@ class ShopifyCoffeeAgent:
             }
 
         system_prompt = """Sei un maestro torrefattore ed esperto di caffè specialty per Caffè Sansone.
-Il tuo compito è attingere esclusivamente alla descrizione HTML attuale di un prodotto e **mantenerla intatta senza inventare nulla**, aggiungendo esclusivamente in fondo un blocco HTML nativo a scomparsa (fisarmonica) elegante e coerente basato rigorosamente sulle fonti certe e sulla storia del brand.
+Il tuo compito è attingere esclusivamente alla descrizione HTML attuale di un prodotto e mantenerla intatta senza inventare nulla, aggiungendo esclusivamente in fondo un blocco HTML nativo a scomparsa (fisarmonica) elegante e coerente basato rigorosamente sulle fonti certe e sulla storia del brand.
 
 REGOLA ASSOLUTA SULLA SEO E SUL TESTO ESISTENTE:
 - Non modificare, riscrivere o cancellare in alcun modo il testo o i tag HTML già presenti nella descrizione attuale del prodotto.
@@ -501,52 +501,48 @@ def read_root():
             '</form></div>'
         )
 
-    html_template = """
-    <html>
-        <head>
-            <title>Caffè Sansone - AI Control Center</title>
-            <style>
-                body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f4f6f8; color: #333; margin: 0; padding: 30px; }
-                .container { max-width: 900px; margin: auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
-                h2 { color: #2c3e50; margin-top: 0; border-bottom: 2px solid #eaeaea; padding-bottom: 15px; }
-                .card { background: #fafbfc; padding: 20px; border-radius: 8px; margin-bottom: 25px; border: 1px solid #e1e4e8; }
-                .card h3 { margin-top: 0; color: #24292e; }
-                label { display: block; margin-bottom: 8px; font-weight: 600; font-size: 14px; }
-                input[type="text"] { width: 100%; padding: 10px; margin-bottom: 15px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; box-sizing: border-box; }
-                button { padding: 12px 20px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 600; transition: background 0.2s; }
-                .btn-primary { background: #2c3e50; color: white; }
-                .btn-primary:hover { background: #1a252f; }
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <h2>☕ Caffè Sansone - Dashboard Control Center</h2>
-                <p>Gestione rigorosa e professionale: zero allucinazioni, rispetto totale della storia del brand e della SEO esistente.</p>
-                
-                <div class="card">
-                    <h3>1. Integrazione HowTo Prodotti (Primi 3 in coda)</h3>
-                    <p style="font-size: 13px; color: #666; margin-bottom: 15px;">Aggiunge il box a scomparsa in fondo alla descrizione esistente basandosi solo su fonti certe e aggiorna il JSON Schema HowTo.</p>
-                    <form action="/prepare-products" method="get">
-                        <button type="submit" class="btn-primary">🔍 Aggiungi HowTo ai Primi 3 Prodotti (Revisione)</button>
-                    </form>
-                </div>
-
-                <div class="card">
-                    <h3>2. Generatore Articoli Blog & Spunti Strategici</h3>
-                    <p style="font-size: 13px; color: #666; margin-bottom: 15px;">Spunti professionali verificati creati dall'IA per il tuo blog. Clicca su uno spunto per generare la bozza completa o inserisci un argomento:</p>
-                    __IDEAS_HTML__
-                    
-                    <form action="/prepare-blog" method="post" style="margin-top: 15px;">
-                        <label>Oppure scrivi un argomento personalizzato:</label>
-                        <input type="text" name="topic" placeholder="es. Metodi di estrazione specialty e profilo aromatico" required />
-                        <button type="submit" class="btn-primary" style="background: #27ae60;">✍️ Genera Bozza Blog Professionale</button>
-                    </form>
-                </div>
-            </div>
-        </body>
-    </html>
-    """
-    return html_template.replace("__IDEAS_HTML__", ideas_html)
+    return (
+        "<html>"
+        "<head>"
+        "<title>Caffè Sansone - AI Control Center</title>"
+        "<style>"
+        "body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f4f6f8; color: #333; margin: 0; padding: 30px; }"
+        ".container { max-width: 900px; margin: auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }"
+        "h2 { color: #2c3e50; margin-top: 0; border-bottom: 2px solid #eaeaea; padding-bottom: 15px; }"
+        ".card { background: #fafbfc; padding: 20px; border-radius: 8px; margin-bottom: 25px; border: 1px solid #e1e4e8; }"
+        ".card h3 { margin-top: 0; color: #24292e; }"
+        "label { display: block; margin-bottom: 8px; font-weight: 600; font-size: 14px; }"
+        "input[type='text'] { width: 100%; padding: 10px; margin-bottom: 15px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; box-sizing: border-box; }"
+        "button { padding: 12px 20px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 600; transition: background 0.2s; }"
+        ".btn-primary { background: #2c3e50; color: white; }"
+        ".btn-primary:hover { background: #1a252f; }"
+        "</style>"
+        "</head>"
+        "<body>"
+        "<div class=\"container\">"
+        "<h2>☕ Caffè Sansone - Dashboard Control Center</h2>"
+        "<p>Gestione rigorosa e professionale: zero allucinazioni, rispetto totale della storia del brand e della SEO esistente.</p>"
+        "<div class=\"card\">"
+        "<h3>1. Integrazione HowTo Prodotti (Primi 3 in coda)</h3>"
+        "<p style=\"font-size: 13px; color: #666; margin-bottom: 15px;\">Aggiunge il box a scomparsa in fondo alla descrizione esistente basandosi solo su fonti certe e aggiorna il JSON Schema HowTo.</p>"
+        "<form action=\"/prepare-products\" method=\"get\">"
+        "<button type=\"submit\" class=\"btn-primary\">🔍 Aggiungi HowTo ai Primi 3 Prodotti (Revisione)</button>"
+        "</form>"
+        "</div>"
+        "<div class=\"card\">"
+        "<h3>2. Generatore Articoli Blog & Spunti Strategici</h3>"
+        "<p style=\"font-size: 13px; color: #666; margin-bottom: 15px;\">Spunti professionali verificati creati dall'IA per il tuo blog. Clicca su uno spunto per generare la bozza completa o inserisci un argomento:</p>"
+        + ideas_html +
+        "<form action=\"/prepare-blog\" method=\"post\" style=\"margin-top: 15px;\">"
+        "<label>Oppure scrivi un argomento personalizzato:</label>"
+        "<input type=\"text\" name=\"topic\" placeholder=\"es. Metodi di estrazione specialty e profilo aromatico\" required />"
+        "<button type=\"submit\" class=\"btn-primary\" style=\"background: #27ae60;\">✍️ Genera Bozza Blog Professionale</button>"
+        "</form>"
+        "</div>"
+        "</div>"
+        "</body>"
+        "</html>"
+    )
 
 @app.get("/prepare-products", response_class=HTMLResponse)
 def prepare_products():

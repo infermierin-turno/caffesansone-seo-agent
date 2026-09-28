@@ -24,7 +24,7 @@ class ShopifyCoffeeAgent:
         self.access_token = self._get_admin_access_token()
 
     def _get_admin_access_token(self):
-        auth_url = f"{self.shop_url}/admin/oauth/access_token"
+        auth_url = self.shop_url + "/admin/oauth/access_token"
         payload = {
             "client_id": self.client_id,
             "client_secret": self.client_secret,
@@ -41,9 +41,9 @@ class ShopifyCoffeeAgent:
                 token = data.get("access_token")
                 if token:
                     return token
-            raise Exception(f"Risposta Shopify {response.status_code}: {response.text}")
+            raise Exception("Risposta Shopify " + str(response.status_code) + ": " + response.text)
         except Exception as e:
-            raise Exception(f"Errore autenticazione OAuth Shopify: {e}")
+            raise Exception("Errore autenticazione OAuth Shopify: " + str(e))
 
     @property
     def headers(self):
@@ -53,7 +53,7 @@ class ShopifyCoffeeAgent:
         }
 
     def get_products(self, limit=50):
-        graphql_url = f"{self.shop_url}/admin/api/2024-07/graphql.json"
+        graphql_url = self.shop_url + "/admin/api/2024-07/graphql.json"
         query = """
         {
           products(first: 50) {
@@ -113,7 +113,7 @@ class ShopifyCoffeeAgent:
                 })
             return products
         else:
-            raise Exception(f"Errore di comunicazione con l'API GraphQL di Shopify: {response.text}")
+            raise Exception("Errore di comunicazione con l'API GraphQL di Shopify: " + response.text)
 
     def append_howto_to_product(self, product_data):
         title = product_data.get("title")
@@ -126,8 +126,8 @@ class ShopifyCoffeeAgent:
                 "howto_schema": {
                     "@context": "https://schema.org",
                     "@type": "HowTo",
-                    "name": f"Guida alla preparazione di {title}",
-                    "description": f"Istruzioni passo-passo per esaltare le note aromatiche di {title}.",
+                    "name": "Guida alla preparazione di " + str(title),
+                    "description": "Istruzioni passo-passo per esaltare le note aromatiche di " + str(title) + ".",
                     "step": [
                         {
                             "@type": "HowToStep",
@@ -162,15 +162,7 @@ Devi restituire ESCLUSIVAMENTE un oggetto JSON valido con queste chiavi:
 2. "howto_schema" (oggetto JSON strutturato come Schema.org HowTo, con name, description e un array step contenente oggetti con @type: "HowToStep", name e text).
 """
 
-        user_prompt = f"""
-Nome prodotto: {title}
-
-Descrizione attuale da preservare integralmente:
-{current_body}
-
-Varianti:
-{json.dumps(var_list, ensure_ascii=False)}
-"""
+        user_prompt = "Nome prodotto: " + str(title) + "\n\nDescrizione attuale da preservare integralmente:\n" + str(current_body) + "\n\nVarianti:\n" + json.dumps(var_list, ensure_ascii=False)
 
         try:
             response = self.ai_client.chat.completions.create(
@@ -189,7 +181,7 @@ Varianti:
                 
             return data
         except Exception as e:
-            print(f"Errore generazione HowTo: {e}")
+            print("Errore generazione HowTo: " + str(e))
             return None
 
     def get_creative_blog_ideas(self):
@@ -216,7 +208,7 @@ RESTUISCI ESCLUSIVAMENTE UN OGGETTO JSON con una chiave "ideas" che contiene un 
             parsed = json.loads(content.strip())
             return parsed.get("ideas", [])
         except Exception as e:
-            print(f"Errore recupero spunti blog: {e}")
+            print("Errore recupero spunti blog: " + str(e))
             return [
                 {"title": "L'importanza della mineralizzazione dell'acqua nell'estrazione del V60", "angle": "Focus tecnico sulla chimica in tazza."},
                 {"title": "Dal chicco alla tazzina: viaggio nei metodi di lavorazione lavati e naturali", "angle": "Approfondimento agronomico e di torrefazione."}
@@ -233,7 +225,7 @@ Restituisci ESCLUSIVAMENTE un oggetto JSON con queste chiavi:
 3. "body_html" (stringa HTML strutturata con tag <p>, <h2>, <ul>, <li>, <strong>)
 4. "tags" (stringa di tag separati da virgola, es. "caffè specialty, tostatura, estrazione")
 """
-        user_prompt = f"Scrivi un articolo di blog approfondito e rigoroso sul seguente argomento: {topic}"
+        user_prompt = "Scrivi un articolo di blog approfondito e rigoroso sul seguente argomento: " + str(topic)
 
         try:
             response = self.ai_client.chat.completions.create(
@@ -254,10 +246,10 @@ Restituisci ESCLUSIVAMENTE un oggetto JSON con queste chiavi:
                 raise Exception("Formato JSON non valido restituito dall'IA.")
             return data
         except Exception as e:
-            raise Exception(f"Errore IA generazione bozza blog: {e}")
+            raise Exception("Errore IA generazione bozza blog: " + str(e))
 
     def publish_blog_post(self, blog_data: dict):
-        graphql_url = f"{self.shop_url}/admin/api/2024-07/graphql.json"
+        graphql_url = self.shop_url + "/admin/api/2024-07/graphql.json"
         
         blogs_query = """
         {
@@ -314,26 +306,13 @@ Restituisci ESCLUSIVAMENTE un oggetto JSON con queste chiavi:
         
         user_errors = art_json.get("data", {}).get("articleCreate", {}).get("userErrors", [])
         if user_errors:
-            raise Exception(f"Errore Shopify creazione articolo: {user_errors}")
+            raise Exception("Errore Shopify creazione articolo: " + str(user_errors))
             
         return art_json.get("data", {}).get("articleCreate", {}).get("article", {})
 
     def update_product_image_alt_texts(self, product_id, product_title):
-        graphql_url = f"{self.shop_url}/admin/api/2024-07/graphql.json"
-        query_images = f"""
-        {{
-          product(id: "gid://shopify/Product/{product_id}") {{
-            images(first: 10) {{
-              edges {{
-                node {{
-                  id
-                  url
-                }}
-              }}
-            }}
-          }}
-        }
-        """
+        graphql_url = self.shop_url + "/admin/api/2024-07/graphql.json"
+        query_images = "{\n  product(id: \"gid://shopify/Product/" + str(product_id) + "\") {\n    images(first: 10) {\n      edges {\n        node {\n          id\n          url\n        }\n      }\n    }\n  }\n}"
         resp = requests.post(graphql_url, json={"query": query_images}, headers=self.headers)
         if resp.status_code != 200:
             return False
@@ -359,7 +338,7 @@ Restituisci ESCLUSIVAMENTE un oggetto JSON con queste chiavi:
         media_inputs = []
         for i, edge in enumerate(edges):
             img_id = edge.get("node", {}).get("id")
-            alt_text = f"{product_title} - Caffè Specialty Sansone Vista {i+1}"
+            alt_text = str(product_title) + " - Caffè Specialty Sansone Vista " + str(i + 1)
             media_inputs.append({
                 "id": img_id,
                 "alt": alt_text,
@@ -367,23 +346,16 @@ Restituisci ESCLUSIVAMENTE un oggetto JSON con queste chiavi:
             })
 
         variables = {
-            "productId": f"gid://shopify/Product/{product_id}",
+            "productId": "gid://shopify/Product/" + str(product_id),
             "media": media_inputs
         }
         requests.post(graphql_url, json={"query": mutation_alt, "variables": variables}, headers=self.headers)
         return True
 
     def update_product_description_and_howto(self, product_id, update_data, tag_to_add="HowTo Ottimizzato"):
-        graphql_url = f"{self.shop_url}/admin/api/2024-07/graphql.json"
+        graphql_url = self.shop_url + "/admin/api/2024-07/graphql.json"
         
-        get_query = f"""
-        {{
-          product(id: "gid://shopify/Product/{product_id}") {{
-            title
-            tags
-          }}
-        }
-        """
+        get_query = "{\n  product(id: \"gid://shopify/Product/" + str(product_id) + "\") {\n    title\n    tags\n  }\n}"
         resp = requests.post(graphql_url, json={"query": get_query}, headers=self.headers)
         tags_list = []
         product_title = "Caffè Specialty"
@@ -414,7 +386,7 @@ Restituisci ESCLUSIVAMENTE un oggetto JSON con queste chiavi:
         
         variables = {
             "input": {
-                "id": f"gid://shopify/Product/{product_id}",
+                "id": "gid://shopify/Product/" + str(product_id),
                 "descriptionHtml": update_data.get("body_html"),
                 "tags": tags_list
             }
@@ -432,7 +404,7 @@ Restituisci ESCLUSIVAMENTE un oggetto JSON con queste chiavi:
             howto_obj = update_data.get("howto_schema")
             if howto_obj:
                 metafields_to_set.append({
-                    "ownerId": f"gid://shopify/Product/{product_id}",
+                    "ownerId": "gid://shopify/Product/" + str(product_id),
                     "namespace": "custom",
                     "key": "how_to_schema",
                     "type": "json",
@@ -494,9 +466,9 @@ def read_root():
         a = idea.get("angle", "")
         ideas_html += (
             '<div style="background: white; border: 1px solid #e1e4e8; padding: 12px; border-radius: 6px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;">'
-            f'<div><strong>{t}</strong><br><span style="font-size: 12px; color: #666;">{a}</span></div>'
+            '<div><strong>' + str(t) + '</strong><br><span style="font-size: 12px; color: #666;">' + str(a) + '</span></div>'
             '<form action="/prepare-blog" method="post" style="margin: 0;">'
-            f'<input type="hidden" name="topic" value="{t}">'
+            '<input type="hidden" name="topic" value="' + str(t) + '">'
             '<button type="submit" style="background: #27ae60; color: white; border: none; padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold;">Usa questo spunto</button>'
             '</form></div>'
         )
@@ -552,20 +524,20 @@ def prepare_products():
         target_products = pending_products[:3]
         
         if not target_products:
-            return """
-            <html><body style="font-family: Arial; padding: 40px; text-align: center;">
-                <h3>Nessun prodotto trovato da aggiornare!</h3>
-                <p>Tutti i prodotti hanno già il tag 'HowTo Ottimizzato'.</p>
-                <a href="/" style="color: #2c3e50; font-weight: bold;">← Torna alla Dashboard</a>
-            </body></html>
-            """
+            return (
+                "<html><body style=\"font-family: Arial; padding: 40px; text-align: center;\">"
+                "<h3>Nessun prodotto trovato da aggiornare!</h3>"
+                "<p>Tutti i prodotti hanno già il tag 'HowTo Ottimizzato'.</p>"
+                "<a href=\"/\" style=\"color: #2c3e50; font-weight: bold;\">← Torna alla Dashboard</a>"
+                "</body></html>"
+            )
             
         previews = []
         for prod in target_products:
             p_id = prod.get("id")
             update_data = agent.append_howto_to_product(prod)
             if update_data:
-                draft_id = f"prod_{p_id}"
+                draft_id = "prod_" + str(p_id)
                 PENDING_APPROVALS[draft_id] = {
                     "type": "product",
                     "product_id": p_id,
@@ -581,28 +553,28 @@ def prepare_products():
         for p in previews:
             cards_html += (
                 '<div style="background: #fff; border: 1px solid #e1e4e8; border-radius: 8px; padding: 20px; margin-bottom: 25px; box-shadow: 0 2px 5px rgba(0,0,0,0.02);">'
-                f'<h3 style="color: #2c3e50; margin-top: 0;">{p["title"]}</h3>'
+                '<h3 style="color: #2c3e50; margin-top: 0;">' + str(p["title"]) + '</h3>'
                 '<p style="font-size: 13px; color: #10b981; font-weight: bold;">ℹ️ La SEO attuale e i testi originali sono intatti. Verrà inserito il box HowTo verificato in fondo.</p>'
-                f'<div style="background: #f9f9f9; padding: 15px; border-radius: 6px; border: 1px solid #eee; max-height: 250px; overflow-y: auto; margin: 15px 0; font-size: 13px;">{p["body_html"]}</div>'
+                '<div style="background: #f9f9f9; padding: 15px; border-radius: 6px; border: 1px solid #eee; max-height: 250px; overflow-y: auto; margin: 15px 0; font-size: 13px;">' + str(p["body_html"]) + '</div>'
                 '<form action="/approve" method="post" style="display:inline;">'
-                f'<input type="hidden" name="draft_id" value="{p["draft_id"]}">'
+                '<input type="hidden" name="draft_id" value="' + str(p["draft_id"]) + '">'
                 '<button type="submit" style="background: #10b981; color: white; padding: 10px 18px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold;">✅ Approva e Aggiorna su Shopify</button>'
                 '</form></div>'
             )
 
-        return f"""
-        <html>
-            <head><title>Revisione HowTo Prodotti - Caffè Sansone</title></head>
-            <body style="font-family: Arial; background: #f4f6f8; padding: 30px;">
-                <div style="max-width: 900px; margin: auto;">
-                    <h2>📋 Revisione Inserimento HowTo ({len(previews)} prodotti)</h2>
-                    <p>Controlla che il box a scomparsa sia aggiunto correttamente in fondo alla descrizione senza alterare i testi o la SEO.</p>
-                    <div style="margin: 20px 0;"><a href="/" style="text-decoration: none; color: #2c3e50; font-weight: bold;">← Torna alla Dashboard</a></div>
-                    {cards_html}
-                </div>
-            </body>
-        </html>
-        """
+        return (
+            "<html>"
+            "<head><title>Revisione HowTo Prodotti - Caffè Sansone</title></head>"
+            "<body style=\"font-family: Arial; background: #f4f6f8; padding: 30px;\">"
+            "<div style=\"max-width: 900px; margin: auto;\">"
+            "<h2>📋 Revisione Inserimento HowTo (" + str(len(previews)) + " prodotti)</h2>"
+            "<p>Controlla che il box a scomparsa sia aggiunto correttamente in fondo alla descrizione senza alterare i testi o la SEO.</p>"
+            "<div style=\"margin: 20px 0;\"><a href=\"/\" style=\"text-decoration: none; color: #2c3e50; font-weight: bold;\">← Torna alla Dashboard</a></div>"
+            + cards_html +
+            "</div>"
+            "</body>"
+            "</html>"
+        )
     except Exception as e:
         return JSONResponse(status_code=500, content={"detail": str(e)})
 
@@ -613,50 +585,47 @@ def prepare_blog(topic: str = Form(...)):
         if not blog_data:
             raise Exception("Impossibile generare la bozza dell'articolo.")
             
-        draft_id = f"blog_{abs(hash(topic))}"
+        draft_id = "blog_" + str(abs(hash(topic)))
         PENDING_APPROVALS[draft_id] = {
             "type": "blog",
             "data": blog_data
         }
 
-        return f"""
-        <html>
-            <head><title>Revisione Articolo Blog - Caffè Sansone</title></head>
-            <body style="font-family: Arial; background: #f4f6f8; padding: 30px;">
-                <div style="max-width: 900px; margin: auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
-                    <h2>✍️ Revisione Bozza Articolo Blog Professionale</h2>
-                    <p>Controlla l'articolo verificato generato dall'IA prima di pubblicarlo sul blog di Shopify.</p>
-                    <hr style="border:0; border-top: 1px solid #eaeaea; margin: 20px 0;">
-                    
-                    <h3 style="color: #2c3e50;">{blog_data.get('title', '')}</h3>
-                    <p><strong>Estratto (Summary):</strong> {blog_data.get('summary', '')}</p>
-                    <p><strong>Tag consigliati:</strong> {blog_data.get('tags', '')}</p>
-                    
-                    <div style="background: #f9f9f9; padding: 20px; border-radius: 6px; border: 1px solid #eee; margin: 20px 0; max-height: 350px; overflow-y: auto;">
-                        {blog_data.get('body_html', '')}
-                    </div>
-                    
-                    <form action="/approve" method="post" style="display:inline;">
-                        <input type="hidden" name="draft_id" value="{draft_id}">
-                        <button type="submit" style="background: #10b981; color: white; padding: 12px 20px; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 15px;">🚀 Approva e Pubblica sul Blog</button>
-                    </form>
-                    <a href="/" style="margin-left: 15px; text-decoration: none; color: #666; font-weight: bold;">Annulla</a>
-                </div>
-            </body>
-        </html>
-        """
+        return (
+            "<html>"
+            "<head><title>Revisione Articolo Blog - Caffè Sansone</title></head>"
+            "<body style=\"font-family: Arial; background: #f4f6f8; padding: 30px;\">"
+            "<div style=\"max-width: 900px; margin: auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05);\">"
+            "<h2>✍️ Revisione Bozza Articolo Blog Professionale</h2>"
+            "<p>Controlla l'articolo verificato generato dall'IA prima di pubblicarlo sul blog di Shopify.</p>"
+            "<hr style=\"border:0; border-top: 1px solid #eaeaea; margin: 20px 0;\">"
+            "<h3 style=\"color: #2c3e50;\">" + str(blog_data.get('title', '')) + "</h3>"
+            "<p><strong>Estratto (Summary):</strong> " + str(blog_data.get('summary', '')) + "</p>"
+            "<p><strong>Tag consigliati:</strong> " + str(blog_data.get('tags', '')) + "</p>"
+            "<div style=\"background: #f9f9f9; padding: 20px; border-radius: 6px; border: 1px solid #eee; margin: 20px 0; max-height: 350px; overflow-y: auto;\">"
+            + str(blog_data.get('body_html', '')) +
+            "</div>"
+            "<form action=\"/approve\" method=\"post\" style=\"display:inline;\">"
+            "<input type=\"hidden\" name=\"draft_id\" value=\"" + str(draft_id) + "\">"
+            "<button type=\"submit\" style=\"background: #10b981; color: white; padding: 12px 20px; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 15px;\">🚀 Approva e Pubblica sul Blog</button>"
+            "</form>"
+            "<a href=\"/\" style=\"margin-left: 15px; text-decoration: none; color: #666; font-weight: bold;\">Annulla</a>"
+            "</div>"
+            "</body>"
+            "</html>"
+        )
     except Exception as e:
         return JSONResponse(status_code=500, content={"detail": str(e)})
 
 @app.post("/approve", response_class=HTMLResponse)
 def approve_draft(draft_id: str = Form(...)):
     if draft_id not in PENDING_APPROVALS:
-        return """
-        <html><body style="font-family: Arial; padding: 40px; text-align: center;">
-            <h3>Bozza non trovata o già approvata/scaduta.</h3>
-            <a href="/" style="color: #2c3e50; font-weight: bold;">← Torna alla Dashboard</a>
-        </body></html>
-        """
+        return (
+            "<html><body style=\"font-family: Arial; padding: 40px; text-align: center;\">"
+            "<h3>Bozza non trovata o già approvata/scaduta.</h3>"
+            "<a href=\"/\" style=\"color: #2c3e50; font-weight: bold;\">← Torna alla Dashboard</a>"
+            "</body></html>"
+        )
     
     item = PENDING_APPROVALS.pop(draft_id)
     item_type = item.get("type")
@@ -672,21 +641,21 @@ def approve_draft(draft_id: str = Form(...)):
         elif item_type == "blog":
             blog_data = item.get("data")
             article = agent.publish_blog_post(blog_data)
-            msg = f"Articolo professionale '{article.get('title')}' pubblicato con successo sul blog di Shopify!"
+            msg = "Articolo professionale '" + str(article.get('title')) + "' pubblicato con successo sul blog di Shopify!"
         else:
             raise Exception("Tipo di elemento non valido.")
 
-        return f"""
-        <html>
-            <head><title>Operazione Completata</title></head>
-            <body style="font-family: Arial; background: #f4f6f8; padding: 50px; text-align: center;">
-                <div style="max-width: 600px; margin: auto; background: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
-                    <h2 style="color: #10b981;">✨ Operazione Riuscita!</h2>
-                    <p style="font-size: 16px; color: #333; margin: 20px 0;">{msg}</p>
-                    <a href="/" style="display: inline-block; margin-top: 20px; background: #2c3e50; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: bold;">Torna alla Dashboard</a>
-                </div>
-            </body>
-        </html>
-        """
+        return (
+            "<html>"
+            "<head><title>Operazione Completata</title></head>"
+            "<body style=\"font-family: Arial; background: #f4f6f8; padding: 50px; text-align: center;\">"
+            "<div style=\"max-width: 600px; margin: auto; background: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05);\">"
+            "<h2 style=\"color: #10b981;\">✨ Operazione Riuscita!</h2>"
+            "<p style=\"font-size: 16px; color: #333; margin: 20px 0;\">" + str(msg) + "</p>"
+            "<a href=\"/\" style=\"display: inline-block; margin-top: 20px; background: #2c3e50; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: bold;\">Torna alla Dashboard</a>"
+            "</div>"
+            "</body>"
+            "</html>"
+        )
     except Exception as e:
         return JSONResponse(status_code=500, content={"detail": str(e)})

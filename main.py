@@ -362,7 +362,7 @@ Varianti del prodotto:
                 metafields_to_set.append({
                     "ownerId": f"gid://shopify/Product/{product_id}",
                     "namespace": "custom",
-                    "key": "faq_schema",
+                    "key": "faq_prodotto",
                     "type": "json",
                     "value": json.dumps(faq_obj, ensure_ascii=False)
                 })
@@ -372,7 +372,7 @@ Varianti del prodotto:
                 metafields_to_set.append({
                     "ownerId": f"gid://shopify/Product/{product_id}",
                     "namespace": "custom",
-                    "key": "howto_schema",
+                    "key": "how_to_schema",
                     "type": "json",
                     "value": json.dumps(howto_obj, ensure_ascii=False)
                 })
@@ -440,7 +440,7 @@ def read_root():
     """
 
 @app.get("/test-and-optimize-first3")
-def test_and_optimize_first3():
+def test_and_optimize-first3():
     try:
         products = agent.get_products(limit=50)
         pending_products = [p for p in products if "HowTo Ottimizzato" not in p.get("tags", [])]

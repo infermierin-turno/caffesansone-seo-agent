@@ -21,14 +21,23 @@ class ShopifyCoffeeAgent:
         self.access_token = self._get_admin_access_token()
 
     def _get_admin_access_token(self):
-        """Ottiene il token di accesso temporaneo usando Client ID e Client Secret (metodo identico all'altro progetto)."""
+        """Ottiene il token di accesso tramite OAuth Client Credentials con Shopify."""
         auth_url = f"{self.shop_url}/admin/oauth/access_token"
         payload = {
             "client_id": self.client_id,
-            "client_secret": self.client_secret
+            "client_secret": self.client_secret,
+            "grant_type": "client_credentials"
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json"
         }
         try:
-            response = requests.post(auth_url, json=payload)
+            print(f"[SHOPIFY AUTH] Tentativo di richiesta token a: {auth_url} con client_id: {self.client_id[:6]}...")
+            response = requests.post(auth_url, json=payload, headers=headers)
+            print(f"[SHOPIFY AUTH] Status Code risposta token: {response.status_code}")
+            print(f"[SHOPIFY AUTH] Body risposta token: {response.text}")
+            
             if response.status_code == 200:
                 data = response.json()
                 token = data.get("access_token")
@@ -37,7 +46,7 @@ class ShopifyCoffeeAgent:
             raise Exception(f"Risposta Shopify {response.status_code}: {response.text}")
         except Exception as e:
             print(f"[ERRORE] Impossibile generare l'access token con Client ID e Secret: {e}")
-            raise e
+            raise Exception(f"Errore autenticazione OAuth Shopify: {e}")
 
     @property
     def headers(self):
@@ -110,8 +119,7 @@ class ShopifyCoffeeAgent:
                 })
             return products
         else:
-            print(f"[ERRORE] Impossibile recuperare i prodotti via GraphQL: {response.text}")
-            return []
+            raise Exception(f"Errore di comunicazione con l'API GraphQL di Shopify: {response.text}")
 
     def get_pending_products(self, limit=3):
         all_products = self.get_products(limit=50)

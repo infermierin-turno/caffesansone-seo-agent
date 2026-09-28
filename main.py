@@ -204,7 +204,6 @@ Varianti del prodotto:
             raw_content = response.choices[0].message.content.strip()
             data = json.loads(raw_content)
             
-            # Fallback di sicurezza per le FAQ se mancano
             if not data.get("faq_schema") or not isinstance(data.get("faq_schema"), list):
                 data["faq_schema"] = [{
                     "@type": "Question",
@@ -215,7 +214,6 @@ Varianti del prodotto:
                     }
                 }]
 
-            # Fallback di sicurezza per l'HowTo se manca
             if not data.get("howto_schema") or not isinstance(data.get("howto_schema"), dict):
                 data["howto_schema"] = {
                     "@context": "https://schema.org",
@@ -243,7 +241,6 @@ Varianti del prodotto:
 
     def update_product_image_alt_texts(self, product_id, product_title):
         graphql_url = f"{self.shop_url}/admin/api/2024-07/graphql.json"
-        
         query_images = f"""
         {{
           product(id: "gid://shopify/Product/{product_id}") {{
@@ -280,7 +277,6 @@ Varianti del prodotto:
           }
         }
         """
-        
         media_inputs = []
         for i, edge in enumerate(edges):
             img_id = edge.get("node", {}).get("id")
@@ -295,11 +291,10 @@ Varianti del prodotto:
             "productId": f"gid://shopify/Product/{product_id}",
             "media": media_inputs
         }
-
         requests.post(graphql_url, json={"query": mutation_alt, "variables": variables}, headers=self.headers)
         return True
 
-    def update_product_seo_and_description(self, product_id, seo_data, tag_to_add="Ottimizzato IA"):
+    def update_product_seo_and_description(self, product_id, seo_data, tag_to_add="HowTo Ottimizzato"):
         graphql_url = f"{self.shop_url}/admin/api/2024-07/graphql.json"
         
         get_query = f"""
@@ -365,7 +360,6 @@ Varianti del prodotto:
                 print(f"[ERRORE GRAPHQL PRODOTTO] {user_errors}")
                 return False
             
-            # Salvataggio Metafield FAQ e HowTo Schema
             metafields_to_set = []
             
             faq_obj = seo_data.get("faq_schema")
@@ -431,11 +425,56 @@ def read_root():
     <html>
         <head><title>Caffè Sansone AI Agent - Specialty Coffee</title></head>
         <body style="font-family: Arial; padding: 40px;">
-            <h2>Agent Caffè Sansone Attivo (SEO, FAQ & HowTo Guide)</h2>
-            <p>Il servizio OAuth è operativo e pronto per popolare le guide e i metafield dei caffè specialty.</p>
+            <h2>Agent Caffè Sansone Attivo (HowTo & Metafield Manager)</h2>
+            <p>Il servizio OAuth è operativo.</p>
+            <form action="/test-and-optimize-first3" method="get">
+                <button type="submit" style="padding: 12px 24px; background: #2c3e50; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 16px;">
+                    Ottimizza i primi 3 prodotti senza HowTo
+                </button>
+            </form>
         </body>
     </html>
     """
+
+@app.get("/test-and-optimize-first3")
+def test_and_optimize_first3():
+    try:
+        products = agent.get_products(limit=50)
+        
+        # Filtra i prodotti che non hanno il tag 'HowTo Ottimizzato'
+        pending_products = [p for p in products if "HowTo Ottimizzato" not in p.get("tags", [])]
+        
+        # Prende solo i primi 3
+        target_products = pending_products[:3]
+        
+        if not target_products:
+            return {"status": "success", "message": "Nessun prodotto trovato da ottimizzare: tutti hanno già il tag 'HowTo Ottimizzato'."}
+            
+        results = []
+        for prod in target_products:
+            p_id = prod.get("id")
+            p_title = prod.get("title")
+            
+            # Genera contenuti IA (SEO, HTML, FAQ e HowTo)
+            optimized_data = agent.optimize_coffee_content(prod)
+            if not optimized_data:
+                results.append({"id": p_id, "title": p_title, "status": "errore generazione IA"})
+                continue
+                
+            # Salva su Shopify, aggiorna metafield e aggiunge il tag 'HowTo Ottimizzato'
+            success = agent.update_product_seo_and_description(p_id, optimized_data, tag_to_add="HowTo Ottimizzato")
+            if success:
+                results.append({"id": p_id, "title": p_title, "status": "successo - HowTo e Metafield popolati"})
+            else:
+                results.append({"id": p_id, "title": p_title, "status": "errore salvataggio Shopify"})
+                
+        return {
+            "status": "completed",
+            "processed_count": len(results),
+            "details": results
+        }
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"detail": str(e)})
 
 @app.post("/optimize")
 def optimize_product(product_id: str = Form(...)):
@@ -454,10 +493,10 @@ def optimize_product(product_id: str = Form(...)):
         if not optimized_data:
             raise HTTPException(status_code=500, detail="Errore durante la generazione dei contenuti con l'IA.")
             
-        success = agent.update_product_seo_and_description(product_id, optimized_data)
+        success = agent.update_product_seo_and_description(product_id, optimized_data, tag_to_add="HowTo Ottimizzato")
         if not success:
             raise HTTPException(status_code=500, detail="Errore durante il salvataggio su Shopify.")
             
-        return {"status": "success", "message": f"Prodotto specialty {product_id} ottimizzato con guide HowTo e FAQ!"}
+        return {"status": "success", "message": f"Prodotto specialty {product_id} ottimizzato con guida HowTo e tag 'HowTo Ottimizzato'!"}
     except Exception as e:
         return JSONResponse(status_code=500, content={"detail": str(e)})

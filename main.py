@@ -120,7 +120,6 @@ class ShopifyCoffeeAgent:
         current_body = product_data.get("body_html", "") or ""
         var_list = product_data.get("variants", [])
 
-        # Se il blocco collassabile è già presente, evitiamo di duplicarlo
         if "Guida alla preparazione e estrazione ottimale" in current_body:
             return {
                 "body_html": current_body,
@@ -185,7 +184,6 @@ Varianti:
             )
             data = json.loads(response.choices[0].message.content.strip())
             
-            # Fallback di sicurezza se l'IA restituisce una descrizione vuota
             if not data.get("body_html"):
                 data["body_html"] = current_body
                 
@@ -217,8 +215,8 @@ RESTUISCI ESCLUSIVAMENTE UN OGGETTO JSON con una chiave "ideas" che contiene un 
             return json.loads(response.choices[0].message.content.strip()).get("ideas", [])
         except Exception as e:
             return [
-                {"title": "L'importanza della mineralizzazione dell'acqua nell'estrazione del V60", "angle": Focus tecnico sulla chimica in tazza."},
-                {"title": "Dal chicco alla tazzina: viaggio nelle fermentazioni anaerobiche", "angle": Scoperta dei processi di lavorazione innovativi."}
+                {"title": "L'importanza della mineralizzazione dell'acqua nell'estrazione del V60", "angle": "Focus tecnico sulla chimica in tazza."},
+                {"title": "Dal chicco alla tazzina: viaggio nelle fermentazioni anaerobiche", "angle": "Scoperta dei processi di lavorazione innovativi."}
             ]
 
     def prepare_blog_post(self, topic: str):
@@ -324,7 +322,7 @@ Restituisci ESCLUSIVAMENTE un oggetto JSON con queste chiavi:
               }}
             }}
           }}
-        }}
+        }
         """
         resp = requests.post(graphql_url, json={"query": query_images}, headers=self.headers)
         if resp.status_code != 200:
@@ -366,7 +364,6 @@ Restituisci ESCLUSIVAMENTE un oggetto JSON con queste chiavi:
         return True
 
     def update_product_description_and_howto(self, product_id, update_data, tag_to_add="HowTo Ottimizzato"):
-        """Aggiorna la descrizione aggiungendo il blocco HTML e imposta il metafield HowTo SENZA toccare la SEO esistente."""
         graphql_url = f"{self.shop_url}/admin/api/2024-07/graphql.json"
         
         get_query = f"""
@@ -390,7 +387,6 @@ Restituisci ESCLUSIVAMENTE un oggetto JSON con queste chiavi:
         if tag_to_add not in tags_list:
             tags_list.append(tag_to_add)
 
-        # Inviamo SOLO la descrizione HTML e i tag. NON tocchiamo l'oggetto 'seo' di Shopify così rimane intatto!
         mutation = """
         mutation productUpdate($input: ProductInput!) {
           productUpdate(input: $input) {
@@ -422,7 +418,6 @@ Restituisci ESCLUSIVAMENTE un oggetto JSON con queste chiavi:
             if user_errors:
                 return False
             
-            # Impostazione del Metafield HowTo Schema
             metafields_to_set = []
             howto_obj = update_data.get("howto_schema")
             if howto_obj:
@@ -482,7 +477,6 @@ agent = ShopifyCoffeeAgent(
 
 @app.get("/", response_class=HTMLResponse)
 def read_root():
-    # Otteniamo gli spunti strategici freschi per il blog
     ideas = agent.get_creative_blog_ideas()
     ideas_html = ""
     for idx, idea in enumerate(ideas):
@@ -512,9 +506,9 @@ def read_root():
                 .card h3 {{ margin-top: 0; color: #24292e; }}
                 label {{ display: block; margin-bottom: 8px; font-weight: 600; font-size: 14px; }}
                 input[type="text"] {{ width: 100%; padding: 10px; margin-bottom: 15px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; box-sizing: border-box; }}
-                button { padding: 12px 20px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 600; transition: background 0.2s; }
-                .btn-primary { background: #2c3e50; color: white; }
-                .btn-primary:hover { background: #1a252f; }
+                button {{ padding: 12px 20px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 600; transition: background 0.2s; }}
+                .btn-primary {{ background: #2c3e50; color: white; }}
+                .btn-primary:hover {{ background: #1a252f; }}
             </style>
         </head>
         <body>

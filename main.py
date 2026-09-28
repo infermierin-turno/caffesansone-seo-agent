@@ -54,34 +54,34 @@ class ShopifyCoffeeAgent:
 
     def get_products(self, limit=50):
         graphql_url = f"{self.shop_url}/admin/api/2024-07/graphql.json"
-        query = f"""
-        {{
-          products(first: {limit}) {{
-            edges {{
-              node {{
+        query = """
+        {
+          products(first: 50) {
+            edges {
+              node {
                 id
                 title
                 handle
                 descriptionHtml
                 tags
-                variants(first: 20) {{
-                  edges {{
-                    node {{
+                variants(first: 20) {
+                  edges {
+                    node {
                       id
                       title
                       price
                       sku
-                      selectedOptions {{
+                      selectedOptions {
                         name
                         value
-                      }}
-                    }}
-                  }}
-                }}
-              }}
-            }}
-          }}
-        }}
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
         """
         response = requests.post(graphql_url, json={"query": query}, headers=self.headers)
         if response.status_code == 200:
@@ -159,7 +159,7 @@ REGOLA ASSOLUTA SULLA SEO E SUL TESTO ESISTENTE:
 REGOLE TASSATIVE PER L'OUTPUT JSON:
 Devi restituire ESCLUSIVAMENTE un oggetto JSON valido con queste chiavi:
 1. "body_html" (stringa HTML: l'intera descrizione originale + il blocco <details> aggiunto alla fine)
-2. "howto_schema" (oggetto JSON strutturato come Schema.org HowTo, con `name`, `description` e un array `step` contenente oggetti con `@type: "HowToStep"`, `name` e `text`).
+2. "howto_schema" (oggetto JSON strutturato come Schema.org HowTo, con name, description e un array step contenente oggetti con @type: "HowToStep", name e text).
 """
 
         user_prompt = f"""
@@ -193,7 +193,6 @@ Varianti:
             return None
 
     def get_creative_blog_ideas(self):
-        """Genera spunti originali, professionali e rigorosi per articoli blog sul caffè specialty."""
         system_prompt = """Sei il consulente di marketing e content strategy per Caffè Sansone, micro-torrefazione artigianale di Napoli.
 Genera 4 spunti originali, di nicchia e di grande interesse tecnico-culturale per un articolo di blog sul caffè specialty. Evita assolutamente qualsiasi allucinazione o invenzione commerciale priva di fondamento: basati su dati tecnici reali (estrazione, chimica dell'acqua, profili di tostatura, storia della torrefazione artigianale).
 
@@ -282,8 +281,8 @@ Restituisci ESCLUSIVAMENTE un oggetto JSON con queste chiavi:
         blog_id = blogs_edges[0]["node"]["id"]
 
         article_mutation = """
-        mutation articleCreate($article: ArticleCreateInput!,$blogId: ID!) {
-          articleCreate(article: $article, blogId:$blogId) {
+        mutation articleCreate($article: ArticleCreateInput!, $blogId: ID!) {
+          articleCreate(article: $article, blogId: $blogId) {
             article {
               id
               title
@@ -507,16 +506,16 @@ def read_root():
         <head>
             <title>Caffè Sansone - AI Control Center</title>
             <style>
-                body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f4f6f8; color: #333; margin: 0; padding: 30px; }}
-                .container {{ max-width: 900px; margin: auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }}
-                h2 {{ color: #2c3e50; margin-top: 0; border-bottom: 2px solid #eaeaea; padding-bottom: 15px; }}
-                .card {{ background: #fafbfc; padding: 20px; border-radius: 8px; margin-bottom: 25px; border: 1px solid #e1e4e8; }}
-                .card h3 {{ margin-top: 0; color: #24292e; }}
-                label {{ display: block; margin-bottom: 8px; font-weight: 600; font-size: 14px; }}
-                input[type="text"] {{ width: 100%; padding: 10px; margin-bottom: 15px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; box-sizing: border-box; }}
-                button {{ padding: 12px 20px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 600; transition: background 0.2s; }}
-                .btn-primary {{ background: #2c3e50; color: white; }}
-                .btn-primary:hover {{ background: #1a252f; }}
+                body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f4f6f8; color: #333; margin: 0; padding: 30px; }
+                .container { max-width: 900px; margin: auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+                h2 { color: #2c3e50; margin-top: 0; border-bottom: 2px solid #eaeaea; padding-bottom: 15px; }
+                .card { background: #fafbfc; padding: 20px; border-radius: 8px; margin-bottom: 25px; border: 1px solid #e1e4e8; }
+                .card h3 { margin-top: 0; color: #24292e; }
+                label { display: block; margin-bottom: 8px; font-weight: 600; font-size: 14px; }
+                input[type="text"] { width: 100%; padding: 10px; margin-bottom: 15px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; box-sizing: border-box; }
+                button { padding: 12px 20px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 600; transition: background 0.2s; }
+                .btn-primary { background: #2c3e50; color: white; }
+                .btn-primary:hover { background: #1a252f; }
             </style>
         </head>
         <body>

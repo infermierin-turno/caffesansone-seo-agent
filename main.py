@@ -1,24 +1,424 @@
 import os
 import json
 import requests
-import uvicorn
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, HTTPException, Request, Form
+from fastapi.responses import HTMLResponse, JSONResponse
 from openai import OpenAI
-from shopify_agent import ShopifyCoffeeAgent
 
-app = FastAPI(title="Caffè Sansone - HowTo SEO Agent")
+app = FastAPI()
 
-# Pulizia e recupero delle variabili d'ambiente per evitare errori di spazi/newlines
-shop_url = (os.getenv("SHOP_URL") or "https://348aca-2.myshopify.com").strip()
-openai_api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
-client_id = (os.getenv("SHOPIFY_CLIENT_ID") or "").strip()
-client_secret = (os.getenv("SHOPIFY_CLIENT_SECRET") or "").strip()
-shopify_access_token = (os.getenv("SHOPIFY_ACCESS_TOKEN") or "").strip()
+class ShopifyCoffeeAgent:
+    def __init__(self, shop_url, openai_api_key, client_id=None, client_secret=None, **kwargs):
+        self.shop_url = shop_url.rstrip('/')
+        self.ai_client = OpenAI(api_key=openai_api_key)
+        
+        self.client_id = client_id or os.getenv("SHOPIFY_CLIENT_ID") or os.getenv("SHOPIFY_API_KEY")
+        self.client_secret = client_secret or os.getenv("SHOPIFY_CLIENT_SECRET") or os.getenv("SHOPIFY_API_SECRET")
+        
+        if not self.client_id or not self.client_secret:
+            raise ValueError("[ERRORE CRITICO] Mancano SHOPIFY_CLIENT_ID o SHOPIFY_CLIENT_SECRET nelle variabili d'ambiente.")
+        
+        self.access_token = self._get_admin_access_token()
 
-client_openai = OpenAI(api_key=openai_api_key)
+    def _get_admin_access_token(self):
+        """Ottiene il token di accesso temporaneo usando Client ID e Client Secret (metodo identico all'altro progetto)."""
+        auth_url = f"{self.shop_url}/admin/oauth/access_token"
+        payload = {
+            "client_id": self.client_id,
+            "client_secret": self.client_secret
+        }
+        try:
+            response = requests.post(auth_url, json=payload)
+            if response.status_code == 200:
+                data = response.json()
+                token = data.get("access_token")
+                if token:
+                    return token
+            raise Exception(f"Risposta Shopify {response.status_code}: {response.text}")
+        except Exception as e:
+            print(f"[ERRORE] Impossibile generare l'access token con Client ID e Secret: {e}")
+            raise e
 
-# Inizializzazione dell'agente Shopify
+    @property
+    def headers(self):
+        return {
+            "Content-Type": "application/json",
+            "X-Shopify-Access-Token": self.access_token
+        }
+
+    def get_products(self, limit=50):
+        graphql_url = f"{self.shop_url}/admin/api/2024-07/graphql.json"
+        
+        query = f"""
+        {{
+          products(first: {limit}) {{
+            edges {{
+              node {{
+                id
+                title
+                handle
+                descriptionHtml
+                tags
+                variants(first: 20) {{
+                  edges {{
+                    node {{
+                      id
+                      title
+                      price
+                      sku
+                      selectedOptions {{
+                        name
+                        value
+                      }}
+                    }}
+                  }}
+                }}
+              }}
+            }}
+          }}
+        }}
+        """
+        
+        response = requests.post(graphql_url, json={"query": query}, headers=self.headers)
+        
+        if response.status_code == 200:
+            data = response.json()
+            edges = data.get("data", {}).get("products", {}).get("edges", [])
+            products = []
+            for edge in edges:
+                node = edge.get("node", {})
+                raw_id = node.get("id", "")
+                numeric_id = raw_id.split("/")[-1] if raw_id else ""
+                
+                variants_list = []
+                for v_edge in node.get("variants", {}).get("edges", []):
+                    v_node = v_edge.get("node", {})
+                    variants_list.append({
+                        "id": v_node.get("id"),
+                        "title": v_node.get("title"),
+                        "price": v_node.get("price"),
+                        "sku": v_node.get("sku"),
+                        "options": v_node.get("selectedOptions", [])
+                    })
+
+                products.append({
+                    "id": numeric_id,
+                    "title": node.get("title"),
+                    "body_html": node.get("descriptionHtml"),
+                    "tags": node.get("tags", []),
+                    "variants": variants_list
+                })
+            return products
+        else:
+            print(f"[ERRORE] Impossibile recuperare i prodotti via GraphQL: {response.text}")
+            return []
+
+    def get_pending_products(self, limit=3):
+        all_products = self.get_products(limit=50)
+        pending = []
+        for p in all_products:
+            tags = p.get("tags", [])
+            if isinstance(tags, str):
+                tags_list = [t.strip() for t in tags.split(",")]
+            else:
+                tags_list = tags
+            
+            if "Ottimizzato IA" not in tags_list:
+                pending.append(p)
+                if len(pending) >= limit:
+                    break
+        return pending
+
+    def optimize_divise_content(self, product_data_or_title, current_body=None, variants=None):
+        if isinstance(product_data_or_title, dict):
+            product_data = product_data_or_title
+        else:
+            product_data = {
+                "title": product_data_or_title,
+                "body_html": current_body,
+                "variants": variants or []
+            }
+
+        title = product_data.get("title")
+        body = product_data.get("body_html", "") or ""
+        var_list = product_data.get("variants", [])
+
+        system_prompt = """Sei un copywriter esperto di abbigliamento professionale e divise per i settori sanitario, estetico, sala, cucina, ristorazione e hospitality.
+
+Scrivi descrizioni per un e-commerce professionale. La voce del brand è competente, concreta, affidabile e rassicurante. Il tono è professionale ma naturale, diretto e comprensibile. Usa frasi brevi, verbi attivi e informazioni utili per aiutare il cliente nella scelta.
+
+Metti in evidenza:
+- comfort e libertà di movimento;
+- vestibilità;
+- tessuti e composizione;
+- resistenza ai lavaggi;
+- facilità di manutenzione;
+- tasche, chiusure, elasticità e dettagli funzionali se presenti nel testo originale;
+- utilizzo professionale consigliato;
+- possibilità di personalizzazione tranne che per scarpe e pantaloni;
+- informazioni utili per favorire la decisione d’acquisto;
+- il problema o bisogno risolto dal prodotto;
+- contesti professionali adatti.
+
+REGOLA FONDAMENTALE SUI LINK:
+Se nella descrizione attuale del prodotto è presente un link (ad esempio un URL o un file PDF della guida alle taglie), DEVI COPIARLO ESATTAMENTE così come si trova, senza modificarlo, senza inventarlo e senza sostituirlo con altri indirizzi. Se non è presente alcun link nel testo originale, non inserire alcun link.
+
+REGOLA FONDAMENTALE GENERALE:
+Non inventare mai caratteristiche, materiali, certificazioni, proprietà tecniche, vestibilità, colori, misure o prestazioni non presenti nelle informazioni fornite.
+
+Non descrivere un prodotto come antibatterico, antimacchia, ignifugo, impermeabile, elasticizzato, certificato, traspirante o adatto a uno specifico utilizzo se queste caratteristiche non sono esplicitamente indicate.
+
+Se un'informazione non è disponibile, omettila. Non fare supposizioni e non presentare come certe informazioni generiche normalmente associate a quel tipo di prodotto.
+
+La descrizione HTML deve essere ordinata e legibile e può contenere:
+- un'introduzione con <p>;
+- titoli <h2> descrittivi;
+- elenchi puntati con <ul> e <li>;
+- parole importanti in <strong>;
+- tag HTML <a> esclusivamente per riportare fedelmente eventuali link già presenti nei dati originali.
+
+Non utilizzare <h1>. Non inserire markdown, emoji, shortcode o codice JavaScript nel corpo HTML.
+
+REGOLE SEO:
+- seo_title: massimo 60 caratteri, chiaro e descrittivo;
+- seo_description: idealmente tra 140 e 155 caratteri, naturale e utile per il cliente;
+- non inserire parole chiave in modo artificiale.
+
+REGOLE TASSATIVE PER L'OUTPUT JSON:
+Devi restituire ESCLUSIVAMENTE un oggetto JSON valido contenente queste precise chiavi di primo livello:
+1. "seo_title" (stringa)
+2. "seo_description" (stringa)
+3. "body_html" (stringa HTML)
+4. "faq_schema" (array di oggetti JSON, obbligatorio, strutturato esattamente con `@type: "Question"`, `name` e `acceptedAnswer` con `@type: "Answer"` e `text`).
+
+Esempio di struttura richiesta:
+{
+  "seo_title": "...",
+  "seo_description": "...",
+  "body_html": "<p>...</p>",
+  "faq_schema": [
+    {
+      "@type": "Question",
+      "name": "Domanda...",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Risposta..."
+      }
+    }
+  ]
+}"""
+
+        user_prompt = f"""
+Analizza e riscrivi il seguente prodotto per il nostro e-commerce.
+
+Nome prodotto:
+{title}
+
+Descrizione attuale:
+{body or "Nessuna descrizione disponibile"}
+
+Varianti del prodotto:
+{json.dumps(var_list, ensure_ascii=False)}
+"""
+
+        try:
+            response = self.ai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.3,
+                response_format={"type": "json_object"}
+            )
+            raw_content = response.choices[0].message.content.strip()
+            data = json.loads(raw_content)
+            
+            if not data.get("faq_schema") or not isinstance(data.get("faq_schema"), list):
+                fallback_faqs = []
+                if var_list:
+                    variants_text = ", ".join([v.get("title", "") for v in var_list if v.get("title")])
+                    fallback_faqs.append({
+                        "@type": "Question",
+                        "name": f"Quali varianti sono disponibili per {title}?",
+                        "acceptedAnswer": {
+                            "@type": "Answer",
+                            "text": f"Il prodotto {title} è disponibile nelle seguenti varianti: {variants_text}."
+                        }
+                    })
+                data["faq_schema"] = fallback_faqs
+
+            return data
+        except Exception as e:
+            print(f"Errore durante la generazione o il parsing JSON dall'IA: {e}")
+            return None
+
+    def update_product_image_alt_texts(self, product_id, product_title):
+        graphql_url = f"{self.shop_url}/admin/api/2024-07/graphql.json"
+        
+        query_images = f"""
+        {{
+          product(id: "gid://shopify/Product/{product_id}") {{
+            images(first: 10) {{
+              edges {{
+                node {{
+                  id
+                  url
+                }}
+              }}
+            }}
+          }}
+        }}
+        """
+        resp = requests.post(graphql_url, json={"query": query_images}, headers=self.headers)
+        if resp.status_code != 200:
+            return False
+            
+        edges = resp.json().get("data", {}).get("product", {}).get("images", {}).get("edges", [])
+        if not edges:
+            return True
+
+        mutation_alt = """
+        mutation productUpdateMedia($media: [CreateMediaInput!]!,$productId: ID!) {
+          productUpdateMedia(media: $media, productId:$productId) {
+            media {
+              id
+              alt
+            }
+            userErrors {
+              field
+              message
+            }
+          }
+        }
+        """
+        
+        media_inputs = []
+        for i, edge in enumerate(edges):
+            img_id = edge.get("node", {}).get("id")
+            alt_text = f"{product_title} - Vista {i+1} abbigliamento professionale"
+            media_inputs.append({
+                "id": img_id,
+                "alt": alt_text,
+                "mediaContentType": "IMAGE"
+            })
+
+        variables = {
+            "productId": f"gid://shopify/Product/{product_id}",
+            "media": media_inputs
+        }
+
+        requests.post(graphql_url, json={"query": mutation_alt, "variables": variables}, headers=self.headers)
+        return True
+
+    def update_product_seo_and_description(self, product_id, seo_data, tag_to_add="Ottimizzato IA"):
+        graphql_url = f"{self.shop_url}/admin/api/2024-07/graphql.json"
+        
+        get_query = f"""
+        {{
+          product(id: "gid://shopify/Product/{product_id}") {{
+            title
+            tags
+          }}
+        }}
+        """
+        resp = requests.post(graphql_url, json={"query": get_query}, headers=self.headers)
+        tags_list = []
+        product_title = "Prodotto Professionale"
+        if resp.status_code == 200:
+            node = resp.json().get("data", {}).get("product", {})
+            if node:
+                product_title = node.get("title", product_title)
+                if node.get("tags"):
+                    tags_list = node.get("tags")
+        
+        if tag_to_add not in tags_list:
+            tags_list.append(tag_to_add)
+
+        mutation = """
+        mutation productUpdate($input: ProductInput!) {
+          productUpdate(input: $input) {
+            product {
+              id
+              title
+              descriptionHtml
+              tags
+              seo {
+                title
+                description
+              }
+            }
+            userErrors {
+              field
+              message
+            }
+          }
+        }
+        """
+        
+        variables = {
+            "input": {
+                "id": f"gid://shopify/Product/{product_id}",
+                "descriptionHtml": seo_data.get("body_html"),
+                "tags": tags_list,
+                "seo": {
+                    "title": seo_data.get("seo_title"),
+                    "description": seo_data.get("seo_description")
+                }
+            }
+        }
+        
+        response = requests.post(graphql_url, json={"query": mutation, "variables": variables}, headers=self.headers)
+        
+        if response.status_code == 200:
+            result_data = response.json()
+            user_errors = result_data.get("data", {}).get("productUpdate", {}).get("userErrors", [])
+            if user_errors:
+                print(f"[ERRORE GRAPHQL PRODOTTO] {user_errors}")
+                return False
+            
+            faq_obj = seo_data.get("faq_schema")
+            if faq_obj:
+                metafield_mutation = """
+                mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+                  metafieldsSet(metafields: $metafields) {
+                    metafields {
+                      id
+                      namespace
+                      key
+                      value
+                    }
+                    userErrors {
+                      field
+                      message
+                    }
+                  }
+                }
+                """
+                metafield_variables = {
+                    "metafields": [
+                        {
+                            "ownerId": f"gid://shopify/Product/{product_id}",
+                            "namespace": "custom",
+                            "key": "faq_schema",
+                            "type": "json",
+                            "value": json.dumps(faq_obj, ensure_ascii=False)
+                        }
+                    ]
+                }
+                
+                requests.post(graphql_url, json={"query": metafield_mutation, "variables": metafield_variables}, headers=self.headers)
+
+            self.update_product_image_alt_texts(product_id, product_title)
+            return True
+        else:
+            return False
+
+shop_url = os.getenv("SHOP_URL", "https://348aca-2.myshopify.com")
+openai_api_key = os.getenv("OPENAI_API_KEY", "")
+client_id = os.getenv("SHOPIFY_CLIENT_ID", "")
+client_secret = os.getenv("SHOPIFY_CLIENT_SECRET", "")
+
 agent = ShopifyCoffeeAgent(
     shop_url=shop_url,
     openai_api_key=openai_api_key,
@@ -26,225 +426,39 @@ agent = ShopifyCoffeeAgent(
     client_secret=client_secret
 )
 
-# Se nel modulo ShopifyCoffeeAgent gli headers non includono l'Access Token diretto,
-# forziamo o integriamo l'header se SHOPIFY_ACCESS_TOKEN è presente su Render:
-if shopify_access_token:
-    if not hasattr(agent, 'headers') or agent.headers is None:
-        agent.headers = {}
-    agent.headers["X-Shopify-Access-Token"] = shopify_access_token
-
-def generate_howto_json(product_title: str, product_description: str) -> str:
-    prompt = f"""
-Sei un esperto di caffè specialty, micro-torrefazione artigianale, estrazioni avanzate e contenuti SEO per caffesansone.it.
-
-Devi generare una guida pratica HowTo in italiano, valida per il caffè specialty indicato sotto.
-
-DATI DEL PRODOTTO
-Titolo:
-<product_title>
-{product_title}
-</product_title>
-
-Descrizione:
-<product_description>
-{product_description}
-</product_description>
-
-OBIETTIVO
-Crea una guida pratica, professionale e utile per:
-- macinare correttamente i grani in base all'estrazione;
-- preparare l'acqua e impostare la temperatura ideale;
-- eseguire l'estrazione (espresso, filtro o cold brew);
-- conservare il caffè torrefatto artigianalmente.
-"""
-
-    json_schema = {
-        "name": "howto_guide",
-        "strict": True,
-        "schema": {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["title", "description", "steps"],
-            "properties": {
-                "title": {
-                    "type": "string",
-                    "description": "Il titolo principale della guida HowTo di preparazione."
-                },
-                "description": {
-                    "type": "string",
-                    "description": "Una breve descrizione introduttiva personalizzata per il caffè."
-                },
-                "steps": {
-                    "type": "array",
-                    "minItems": 4,
-                    "maxItems": 4,
-                    "items": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "required": ["name", "text"],
-                        "properties": {
-                            "name": {
-                                "type": "string",
-                                "description": "Il titolo del passaggio."
-                            },
-                            "text": {
-                                "type": "string",
-                                "description": "Il testo descrittivo del passaggio."
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    try:
-        response = client_openai.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            response_format={"type": "json_schema", "json_schema": json_schema},
-            temperature=0.2
-        )
-        content = response.choices[0].message.content.strip()
-        parsed_data = json.loads(content)
-        if "steps" not in parsed_data or len(parsed_data["steps"]) != 4:
-            raise ValueError("Il numero di passaggi generati non è esattamente 4.")
-        return content
-    except Exception as e:
-        print(f"Errore nella generazione dello schema HowTo per '{product_title}': {e}")
-        fallback_data = {
-            "title": f"Guida alla preparazione ottimale di {product_title}",
-            "description": "Istruzioni di base per esaltare il profilo aromatico in tazza.",
-            "steps": [
-                {"name": "1. Scelta della macinatura", "text": "Macina i grani freschi subito prima dell'estrazione."},
-                {"name": "2. Controllo dell'acqua", "text": "Utilizza acqua a basso residuo fisso tra 90°C e 94°C."},
-                {"name": "3. Estrazione e dosaggio", "text": "Pesa accuratamente la dose di caffè e rispetta i tempi."},
-                {"name": "4. Conservazione", "text": "Richiudi bene la confezione con la valvola salvafreschezza."}
-            ]
-        }
-        return json.dumps(fallback_data, ensure_ascii=False)
-
 @app.get("/", response_class=HTMLResponse)
 def read_root():
     return """
-    <!DOCTYPE html>
-    <html lang="it">
-    <head>
-        <meta charset="UTF-8">
-        <title>Caffè Sansone - HowTo Agent</title>
-        <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
-    </head>
-    <body class="bg-amber-50/30 text-gray-900 font-sans antialiased">
-        <div class="max-w-2xl mx-auto p-12">
-            <h1 class="text-3xl font-bold text-amber-800 mb-4">Caffè Sansone - HowTo SEO</h1>
-            <p class="text-gray-600 mb-6">Inserisci l'ID del prodotto Shopify per generare e applicare la guida di estrazione HowTo nei metafield:</p>
-            <form action="/apply-howto" method="get" class="flex gap-3">
-                <input type="text" name="product_id" placeholder="ID Prodotto Shopify" required
-                    class="flex-1 px-4 py-2 border rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-500">
-                <button type="submit" class="bg-amber-700 hover:bg-amber-800 text-white font-medium px-5 py-2 rounded-lg text-sm transition shadow">
-                    Genera & Salva HowTo
-                </button>
-            </form>
-        </div>
-    </body>
+    <html>
+        <head><title>Caffè Sansone AI Agent</title></head>
+        <body style="font-family: Arial; padding: 40px;">
+            <h2>Agent Shopify & OpenAI Attivo (OAuth Client Credentials)</h2>
+            <p>Il servizio è pronto per elaborare i prodotti.</p>
+        </body>
     </html>
     """
 
-@app.get("/apply-howto", response_class=HTMLResponse)
-def apply_howto_product(product_id: str):
-    clean_input = product_id.strip()
-    if not clean_input.startswith("gid://"):
-        numeric_id = clean_input.split("/")[-1]
-        raw_gid = f"gid://shopify/Product/{numeric_id}"
-    else:
-        raw_gid = clean_input
-
-    graphql_url = f"{agent.shop_url}/admin/api/2024-07/graphql.json"
-
-    # Recupera dati del prodotto tramite GraphQL
-    product_query = """
-    query getProduct($id: ID!) {
-      product(id: $id) {
-        id
-        title
-        descriptionHtml
-      }
-    }
-    """
-    prod_resp = requests.post(
-        graphql_url,
-        json={"query": product_query, "variables": {"id": raw_gid}},
-        headers=agent.headers
-    )
-
-    if prod_resp.status_code != 200:
-        raise HTTPException(status_code=500, detail=f"Errore di comunicazione con l'API GraphQL di Shopify: {prod_resp.text}")
-
-    prod_resp_json = prod_resp.json()
-    if "errors" in prod_resp_json:
-        raise HTTPException(status_code=400, detail=f"Errore GraphQL Shopify: {prod_resp_json['errors']}")
-
-    prod_data = prod_resp_json.get("data", {}).get("product")
-    if not prod_data:
-        raise HTTPException(status_code=404, detail=f"Prodotto non trovato su Shopify per il GID: {raw_gid}")
-
-    title = prod_data.get("title", "Caffè Specialty")
-    body_html = prod_data.get("descriptionHtml", "") or ""
-
-    # Genera il HowTo tramite IA
-    howto_json_str = generate_howto_json(title, body_html)
-
-    # Salva nel metafield custom.howto_schema tramite GraphQL
-    metafield_mutation = """
-    mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
-      metafieldsSet(metafields: $metafields) {
-        metafields {
-          id
-          namespace
-          key
-        }
-        userErrors {
-          field
-          message
-        }
-      }
-    }
-    """
-    
-    variables = {
-        "metafields": [{
-            "ownerId": raw_gid,
-            "namespace": "custom",
-            "key": "howto_schema",
-            "type": "json",
-            "value": howto_json_str
-        }]
-    }
-
-    meta_resp = requests.post(graphql_url, json={"query": metafield_mutation, "variables": variables}, headers=agent.headers)
-    if meta_resp.status_code != 200:
-        raise HTTPException(status_code=500, detail="Errore di comunicazione con l'API GraphQL per il salvataggio.")
-    
-    meta_data = meta_resp.json()
-    
-    # Aggiungiamo un controllo di debug nei log in caso di errori di mutazione
-    errors = meta_data.get("data", {}).get("metafieldsSet", {}).get("userErrors", [])
-    if errors:
-        raise HTTPException(status_code=500, detail=f"Errore Shopify Metafield: {errors}")
-
-    return f"""
-    <!DOCTYPE html>
-    <html lang="it">
-    <head><script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script></head>
-    <body class="bg-amber-50/30 p-12">
-        <div class="max-w-xl mx-auto bg-white p-8 rounded-xl shadow border border-amber-200 text-center">
-            <h1 class="text-xl font-bold text-amber-800 mb-2">Guida HowTo Salvata!</h1>
-            <p class="text-gray-600 mb-4">Il metafield <code>custom.howto_schema</code> è stato aggiornato correttamente per il prodotto: <strong>{title}</strong></p>
-            <a href="/" class="inline-block bg-amber-700 text-white px-5 py-2 rounded-lg text-sm">Torna alla Home</a>
-        </div>
-    </body>
-    </html>
-    """
-
-if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+@app.post("/optimize")
+def optimize_product(product_id: str = Form(...)):
+    try:
+        products = agent.get_products(limit=100)
+        target_product = None
+        for p in products:
+            if str(p.get("id")) == str(product_id):
+                target_product = p
+                break
+        
+        if not target_product:
+            raise HTTPException(status_code=404, detail="Prodotto non trovato su Shopify.")
+            
+        optimized_data = agent.optimize_divise_content(target_product)
+        if not optimized_data:
+            raise HTTPException(status_code=500, detail="Errore durante la generazione dei contenuti con l'IA.")
+            
+        success = agent.update_product_seo_and_description(product_id, optimized_data)
+        if not success:
+            raise HTTPException(status_code=500, detail="Errore durante il salvataggio su Shopify.")
+            
+        return {"status": "success", "message": f"Prodotto {product_id} ottimizzato con successo!"}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"detail": str(e)})

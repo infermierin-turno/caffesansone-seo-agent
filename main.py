@@ -378,7 +378,6 @@ Varianti del prodotto:
                       value
                     }
                     userErrors {
-                      key
                       field
                       message
                       code
@@ -391,6 +390,12 @@ Varianti del prodotto:
                 print(f"[DEBUG SHOPIFY METAFIELDS RAW RESPONSE]: {meta_resp.text}")
                 
                 meta_json = meta_resp.json()
+                
+                # Controllo errori globali di sintassi/schema GraphQL
+                if "errors" in meta_json:
+                    print(f"[ERRORE CRITICO GRAPHQL METAFIELDS]: {meta_json['errors']}")
+                    return False
+
                 meta_errors = meta_json.get("data", {}).get("metafieldsSet", {}).get("userErrors", [])
                 if meta_errors:
                     print(f"[ERRORE CRITICO METAFIELDS USER ERRORS]: {meta_errors}")

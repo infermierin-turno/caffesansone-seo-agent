@@ -153,6 +153,19 @@ La descrizione HTML deve essere ordinata e pulita:
 - parole chiave in <strong>.
 Non utilizzare <h1>.
 
+IMPORTANTE - AGGIUNTA DELLA GUIDA A SCOMPARSA (COLLAPSIBLE / ACCORDION):
+Alla fine della descrizione `body_html`, devi SEMPRE includere un blocco HTML nativo a scomparsa (fisarmonica) strutturato esattamente così:
+<details style="margin: 20px 0; border: 1px solid #e5e5e5; border-radius: 8px; padding: 15px; background: #fafafa;">
+  <summary style="font-weight: bold; cursor: pointer; color: #2c3e50; font-size: 1.05rem;">☕ Guida alla preparazione e estrazione ottimale</summary>
+  <div style="margin-top: 12px; font-size: 0.95rem; color: #444;">
+    <p>Istruzioni dettagliate per esaltare al massimo le note aromatiche di questo caffè...</p>
+    <ul style="padding-left: 20px; margin-top: 8px;">
+      <li><strong>Passo 1:</strong> ...</li>
+      <li><strong>Passo 2:</strong> ...</li>
+    </ul>
+  </div>
+</details>
+
 REGOLE SEO:
 - seo_title: massimo 60 caratteri, ottimizzato per caffè specialty;
 - seo_description: tra 140 e 155 caratteri, descrittiva e orientata alla conversione.
@@ -161,7 +174,7 @@ REGOLE TASSATIVE PER L'OUTPUT JSON:
 Devi restituire ESCLUSIVAMENTE un oggetto JSON valido contenente queste precise chiavi di primo livello:
 1. "seo_title" (stringa)
 2. "seo_description" (stringa)
-3. "body_html" (stringa HTML)
+3. "body_html" (stringa HTML comprensiva del blocco <details> finale)
 4. "faq_schema" (array di oggetti JSON strutturati con `@type: "Question"`, `name` e `acceptedAnswer`)
 5. "howto_schema" (oggetto JSON strutturato come Schema.org HowTo, contenente `name`, `description` e un array `step` dove ogni passo ha `@type: "HowToStep"`, `name` e `text`).
 
@@ -391,7 +404,6 @@ Varianti del prodotto:
                 
                 meta_json = meta_resp.json()
                 
-                # Controllo errori globali di sintassi/schema GraphQL
                 if "errors" in meta_json:
                     print(f"[ERRORE CRITICO GRAPHQL METAFIELDS]: {meta_json['errors']}")
                     return False
@@ -425,8 +437,8 @@ def read_root():
     <html>
         <head><title>Caffè Sansone AI Agent - Specialty Coffee</title></head>
         <body style="font-family: Arial; padding: 40px;">
-            <h2>Agent Caffè Sansone Attivo (HowTo & Metafield Manager)</h2>
-            <p>Il servizio OAuth è operativo.</p>
+            <h2>Agent Caffè Sansone Attivo (HowTo HTML & Metafield Manager)</h2>
+            <p>Il servizio OAuth è operativo e genera guide collassabili automatiche.</p>
             <form action="/test-and-optimize-first3" method="get">
                 <button type="submit" style="padding: 12px 24px; background: #2c3e50; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 16px;">
                     Ottimizza i primi 3 prodotti senza HowTo
@@ -458,7 +470,7 @@ def test_and_optimize_first3():
                 
             success = agent.update_product_seo_and_description(p_id, optimized_data, tag_to_add="HowTo Ottimizzato")
             if success:
-                results.append({"id": p_id, "title": p_title, "status": "successo - HowTo e Metafield popolati"})
+                results.append({"id": p_id, "title": p_title, "status": "successo - HowTo, Metafield e Box Collassabile popolati"})
             else:
                 results.append({"id": p_id, "title": p_title, "status": "errore salvataggio Shopify"})
                 
@@ -491,6 +503,6 @@ def optimize_product(product_id: str = Form(...)):
         if not success:
             raise HTTPException(status_code=500, detail="Errore durante il salvataggio su Shopify.")
             
-        return {"status": "success", "message": f"Prodotto specialty {product_id} ottimizzato con guida HowTo e tag 'HowTo Ottimizzato'!"}
+        return {"status": "success", "message": f"Prodotto specialty {product_id} ottimizzato con guida a scomparsa e tag 'HowTo Ottimizzato'!"}
     except Exception as e:
         return JSONResponse(status_code=500, content={"detail": str(e)})

@@ -9,19 +9,29 @@ from shopify_agent import ShopifyCoffeeAgent
 
 app = FastAPI(title="Caffè Sansone - HowTo SEO Agent")
 
-shop_url = os.getenv("SHOP_URL") or "https://348aca-2.myshopify.com"
-openai_api_key = os.getenv("OPENAI_API_KEY")
-client_id = os.getenv("SHOPIFY_CLIENT_ID")
-client_secret = os.getenv("SHOPIFY_CLIENT_SECRET")
+# Pulizia e recupero delle variabili d'ambiente per evitare errori di spazi/newlines
+shop_url = (os.getenv("SHOP_URL") or "https://348aca-2.myshopify.com").strip()
+openai_api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
+client_id = (os.getenv("SHOPIFY_CLIENT_ID") or "").strip()
+client_secret = (os.getenv("SHOPIFY_CLIENT_SECRET") or "").strip()
+shopify_access_token = (os.getenv("SHOPIFY_ACCESS_TOKEN") or "").strip()
 
 client_openai = OpenAI(api_key=openai_api_key)
 
+# Inizializzazione dell'agente Shopify
 agent = ShopifyCoffeeAgent(
     shop_url=shop_url,
     openai_api_key=openai_api_key,
     client_id=client_id,
     client_secret=client_secret
 )
+
+# Se nel modulo ShopifyCoffeeAgent gli headers non includono l'Access Token diretto,
+# forziamo o integriamo l'header se SHOPIFY_ACCESS_TOKEN è presente su Render:
+if shopify_access_token:
+    if not hasattr(agent, 'headers') or agent.headers is None:
+        agent.headers = {}
+    agent.headers["X-Shopify-Access-Token"] = shopify_access_token
 
 def generate_howto_json(product_title: str, product_description: str) -> str:
     prompt = f"""
@@ -216,6 +226,8 @@ def apply_howto_product(product_id: str):
         raise HTTPException(status_code=500, detail="Errore di comunicazione con l'API GraphQL per il salvataggio.")
     
     meta_data = meta_resp.json()
+    
+    # Aggiungiamo un controllo di debug nei log in caso di errori di mutazione
     errors = meta_data.get("data", {}).get("metafieldsSet", {}).get("userErrors", [])
     if errors:
         raise HTTPException(status_code=500, detail=f"Errore Shopify Metafield: {errors}")

@@ -2,10 +2,13 @@ import os
 import json
 import requests
 from fastapi import FastAPI, HTTPException, Request, Form
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from openai import OpenAI
 
 app = FastAPI()
+
+# Memoria temporanea in-memory per le bozze in attesa di approvazione
+PENDING_APPROVALS = {}
 
 class ShopifyCoffeeAgent:
     def __init__(self, shop_url, openai_api_key, client_id=None, client_secret=None, **kwargs):
@@ -21,7 +24,6 @@ class ShopifyCoffeeAgent:
         self.access_token = self._get_admin_access_token()
 
     def _get_admin_access_token(self):
-        """Ottiene il token di accesso tramite OAuth Client Credentials con Shopify."""
         auth_url = f"{self.shop_url}/admin/oauth/access_token"
         payload = {
             "client_id": self.client_id,
@@ -33,7 +35,6 @@ class ShopifyCoffeeAgent:
             "Accept": "application/json"
         }
         try:
-            print(f"[SHOPIFY AUTH] Tentativo di richiesta token a: {auth_url}")
             response = requests.post(auth_url, json=payload, headers=headers)
             if response.status_code == 200:
                 data = response.json()
@@ -42,7 +43,6 @@ class ShopifyCoffeeAgent:
                     return token
             raise Exception(f"Risposta Shopify {response.status_code}: {response.text}")
         except Exception as e:
-            print(f"[ERRORE] Impossibile generare l'access token con Client ID e Secret: {e}")
             raise Exception(f"Errore autenticazione OAuth Shopify: {e}")
 
     @property
@@ -54,7 +54,6 @@ class ShopifyCoffeeAgent:
 
     def get_products(self, limit=50):
         graphql_url = f"{self.shop_url}/admin/api/2024-07/graphql.json"
-        
         query = f"""
         {{
           products(first: {limit}) {{
@@ -84,9 +83,7 @@ class ShopifyCoffeeAgent:
           }}
         }}
         """
-        
         response = requests.post(graphql_url, json={"query": query}, headers=self.headers)
-        
         if response.status_code == 200:
             data = response.json()
             edges = data.get("data", {}).get("products", {}).get("edges", [])
@@ -177,19 +174,7 @@ Devi restituire ESCLUSIVAMENTE un oggetto JSON valido contenente queste precise 
 3. "body_html" (stringa HTML comprensiva del blocco <details> finale)
 4. "faq_schema" (array di oggetti JSON strutturati con `@type: "Question"`, `name` e `acceptedAnswer`)
 5. "howto_schema" (oggetto JSON strutturato come Schema.org HowTo, contenente `name`, `description` e un array `step` dove ogni passo ha `@type: "HowToStep"`, `name` e `text`).
-
-Esempio di struttura richiesta per howto_schema:
-{
-  "name": "Come preparare al meglio...",
-  "description": "Guida passo-passo per un'estrazione perfetta...",
-  "step": [
-    {
-      "@type": "HowToStep",
-      "name": "Preparazione dell'acqua",
-      "text": "Usa acqua a basso residuo fisso..."
-    }
-  ]
-}"""
+"""
 
         user_prompt = f"""
 Analizza e crea i contenuti ottimizzati per il seguente caffè specialty di Caffè Sansone.
@@ -238,11 +223,6 @@ Varianti del prodotto:
                             "@type": "HowToStep",
                             "name": "Macinatura",
                             "text": "Macina i chicchi subito prima dell'estrazione in base al metodo di infusione scelto."
-                        },
-                        {
-                            "@type": "HowToStep",
-                            "name": "Estrazione",
-                            "text": "Procedi all'estrazione seguendo i tempi e le proporzioni ideali per valorizzare il profilo aromatico."
                         }
                     ]
                 }
@@ -251,6 +231,97 @@ Varianti del prodotto:
         except Exception as e:
             print(f"Errore durante la generazione dei contenuti con l'IA: {e}")
             return None
+
+    def prepare_blog_post(self, topic: str):
+        """Genera la bozza di un articolo blog tramite OpenAI senza pubblicarla subito."""
+        system_prompt = """Sei un copywriter esperto di caffè specialty e torrefazione artigianale per Caffè Sansone.
+Scrivi un articolo per il blog coinvolgente, approfondito, autorevole e ottimizzato in ottica SEO per gli amanti del caffè di alta qualità.
+
+REGOLE TASSATIVE PER L'OUTPUT JSON:
+Restituisci ESCLUSIVAMENTE un oggetto JSON con queste chiavi:
+1. "title" (stringa, titolo accattivante dell'articolo)
+2. "summary" (stringa, breve estratto di 2-3 righe)
+3. "body_html" (stringa HTML strutturata con tag <p>, <h2>, <ul>, <li>, <strong>)
+4. "tags" (stringa di tag separati da virgola, es. "caffè specialty, moka, ricette")
+"""
+        user_prompt = f"Scrivi un articolo di blog approfondito sul seguente argomento: {topic}"
+
+        try:
+            response = self.ai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.4,
+                response_format={"type": "json_object"}
+            )
+            return json.loads(response.choices[0].message.content.strip())
+        except Exception as e:
+            raise Exception(f"Errore IA generazione bozza blog: {e}")
+
+    def publish_blog_post(self, blog_data: dict):
+        """Pubblica ufficialmente l'articolo sul blog di Shopify."""
+        graphql_url = f"{self.shop_url}/admin/api/2024-07/graphql.json"
+        
+        blogs_query = """
+        {
+          blogs(first: 1) {
+            edges {
+              node {
+                id
+              }
+            }
+          }
+        }
+        """
+        resp = requests.post(graphql_url, json={"query": blogs_query}, headers=self.headers)
+        if resp.status_code != 200:
+            raise Exception("Impossibile recuperare i blog da Shopify.")
+        
+        blogs_edges = resp.json().get("data", {}).get("blogs", {}).get("edges", [])
+        if not blogs_edges:
+            raise Exception("Nessun blog trovato su Shopify. Crea almeno un blog nel pannello di Shopify Admin.")
+        
+        blog_id = blogs_edges[0]["node"]["id"]
+
+        article_mutation = """
+        mutation articleCreate($article: ArticleCreateInput!,$blogId: ID!) {
+          articleCreate(article: $article, blogId:$blogId) {
+            article {
+              id
+              title
+              handle
+            }
+            userErrors {
+              field
+              message
+            }
+          }
+        }
+        """
+        
+        tags_array = [t.strip() for t in blog_data.get("tags", "").split(",") if t.strip()]
+
+        article_variables = {
+            "blogId": blog_id,
+            "article": {
+                "title": blog_data.get("title"),
+                "bodyHtml": blog_data.get("body_html"),
+                "summary": blog_data.get("summary"),
+                "tags": tags_array,
+                "isPublished": True
+            }
+        }
+
+        art_resp = requests.post(graphql_url, json={"query": article_mutation, "variables": article_variables}, headers=self.headers)
+        art_json = art_resp.json()
+        
+        user_errors = art_json.get("data", {}).get("articleCreate", {}).get("userErrors", [])
+        if user_errors:
+            raise Exception(f"Errore Shopify creazione articolo: {user_errors}")
+            
+        return art_json.get("data", {}).get("articleCreate", {}).get("article", {})
 
     def update_product_image_alt_texts(self, product_id, product_title):
         graphql_url = f"{self.shop_url}/admin/api/2024-07/graphql.json"
@@ -359,17 +430,14 @@ Varianti del prodotto:
         }
         
         response = requests.post(graphql_url, json={"query": mutation, "variables": variables}, headers=self.headers)
-        print(f"[DEBUG SHOPIFY PRODOTTO] Status: {response.status_code}, Body: {response.text}")
         
         if response.status_code == 200:
             result_data = response.json()
             user_errors = result_data.get("data", {}).get("productUpdate", {}).get("userErrors", [])
             if user_errors:
-                print(f"[ERRORE GRAPHQL PRODOTTO USER ERRORS]: {user_errors}")
                 return False
             
             metafields_to_set = []
-            
             howto_obj = seo_data.get("howto_schema")
             if howto_obj:
                 metafields_to_set.append({
@@ -400,23 +468,18 @@ Varianti del prodotto:
                 """
                 metafield_variables = {"metafields": metafields_to_set}
                 meta_resp = requests.post(graphql_url, json={"query": metafield_mutation, "variables": metafield_variables}, headers=self.headers)
-                print(f"[DEBUG SHOPIFY METAFIELDS RAW RESPONSE]: {meta_resp.text}")
-                
                 meta_json = meta_resp.json()
                 
                 if "errors" in meta_json:
-                    print(f"[ERRORE CRITICO GRAPHQL METAFIELDS]: {meta_json['errors']}")
                     return False
 
                 meta_errors = meta_json.get("data", {}).get("metafieldsSet", {}).get("userErrors", [])
                 if meta_errors:
-                    print(f"[ERRORE CRITICO METAFIELDS USER ERRORS]: {meta_errors}")
                     return False
 
             self.update_product_image_alt_texts(product_id, product_title)
             return True
         else:
-            print(f"[ERRORE HTTP PRODOTTO]: {response.text}")
             return False
 
 shop_url = os.getenv("SHOP_URL", "https://348aca-2.myshopify.com")
@@ -435,74 +498,196 @@ agent = ShopifyCoffeeAgent(
 def read_root():
     return """
     <html>
-        <head><title>Caffè Sansone AI Agent - Specialty Coffee</title></head>
-        <body style="font-family: Arial; padding: 40px;">
-            <h2>Agent Caffè Sansone Attivo (HowTo HTML & Metafield Manager)</h2>
-            <p>Il servizio OAuth è operativo e genera guide collassabili automatiche.</p>
-            <form action="/test-and-optimize-first3" method="get">
-                <button type="submit" style="padding: 12px 24px; background: #2c3e50; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 16px;">
-                    Ottimizza i primi 3 prodotti senza HowTo
-                </button>
-            </form>
+        <head>
+            <title>Caffè Sansone - AI Control Center</title>
+            <style>
+                body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f4f6f8; color: #333; margin: 0; padding: 30px; }
+                .container { max-width: 900px; margin: auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+                h2 { color: #2c3e50; margin-top: 0; border-bottom: 2px solid #eaeaea; padding-bottom: 15px; }
+                .card { background: #fafbfc; padding: 20px; border-radius: 8px; margin-bottom: 25px; border: 1px solid #e1e4e8; }
+                .card h3 { margin-top: 0; color: #24292e; }
+                label { display: block; margin-bottom: 8px; font-weight: 600; font-size: 14px; }
+                input[type="text"] { width: 100%; padding: 10px; margin-bottom: 15px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; box-sizing: border-box; }
+                button { padding: 12px 20px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 600; transition: background 0.2s; }
+                .btn-primary { background: #2c3e50; color: white; }
+                .btn-primary:hover { background: #1a252f; }
+                .btn-success { background: #10b981; color: white; }
+                .btn-success:hover { background: #059669; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h2>☕ Caffè Sansone - Dashboard Control Center</h2>
+                <p>Gestisci l'ottimizzazione dei prodotti e la creazione di articoli con revisione preventiva prima della pubblicazione.</p>
+                
+                <div class="card">
+                    <h3>1. Ottimizzazione Prodotti (Primi 3 in coda)</h3>
+                    <p style="font-size: 13px; color: #666; margin-bottom: 15px;">Genera la bozza con descrizione ottimizzata, box a scomparsa e Schema HowTo da revisionare prima di salvarla su Shopify.</p>
+                    <form action="/prepare-products" method="get">
+                        <button type="submit" class="btn-primary">🔍 Genera e Revisiona Primi 3 Prodotti</button>
+                    </form>
+                </div>
+
+                <div class="card">
+                    <h3>2. Generatore Articoli Blog</h3>
+                    <p style="font-size: 13px; color: #666; margin-bottom: 15px;">Crea una bozza di articolo per il blog con l'IA e approvala prima di renderla pubblica online.</p>
+                    <form action="/prepare-blog" method="post">
+                        <label>Argomento o Titolo dell'articolo:</label>
+                        <input type="text" name="topic" placeholder="es. Come abbinare i dolci natalizi al caffè specialty" required />
+                        <button type="submit" class="btn-success">✍️ Genera Bozza Articolo</button>
+                    </form>
+                </div>
+            </div>
         </body>
     </html>
     """
 
-@app.get("/test-and-optimize-first3")
-def test_and_optimize_first3():
+@app.get("/prepare-products", response_class=HTMLResponse)
+def prepare_products():
     try:
         products = agent.get_products(limit=50)
         pending_products = [p for p in products if "HowTo Ottimizzato" not in p.get("tags", [])]
         target_products = pending_products[:3]
         
         if not target_products:
-            return {"status": "success", "message": "Nessun prodotto trovato da ottimizzare: tutti hanno già il tag 'HowTo Ottimizzato'."}
+            return """
+            <html><body style="font-family: Arial; padding: 40px; text-align: center;">
+                <h3>Nessun prodotto trovato da ottimizzare!</h3>
+                <p>Tutti i prodotti hanno già il tag 'HowTo Ottimizzato'.</p>
+                <a href="/" style="color: #2c3e50; font-weight: bold;">← Torna alla Dashboard</a>
+            </body></html>
+            """
             
-        results = []
+        previews = []
         for prod in target_products:
             p_id = prod.get("id")
-            p_title = prod.get("title")
-            
             optimized_data = agent.optimize_coffee_content(prod)
-            if not optimized_data:
-                results.append({"id": p_id, "title": p_title, "status": "errore generazione IA"})
-                continue
-                
-            success = agent.update_product_seo_and_description(p_id, optimized_data, tag_to_add="HowTo Ottimizzato")
-            if success:
-                results.append({"id": p_id, "title": p_title, "status": "successo - HowTo, Metafield e Box Collassabile popolati"})
-            else:
-                results.append({"id": p_id, "title": p_title, "status": "errore salvataggio Shopify"})
-                
-        return {
-            "status": "completed",
-            "processed_count": len(results),
-            "details": results
-        }
+            if optimized_data:
+                draft_id = f"prod_{p_id}"
+                PENDING_APPROVALS[draft_id] = {
+                    "type": "product",
+                    "product_id": p_id,
+                    "data": optimized_data
+                }
+                previews.append({
+                    "draft_id": draft_id,
+                    "title": prod.get("title"),
+                    "seo_title": optimized_data.get("seo_title"),
+                    "seo_description": optimized_data.get("seo_description"),
+                    "body_html": optimized_data.get("body_html")
+                })
+        
+        cards_html = ""
+        for p in previews:
+            cards_html += f"""
+            <div style="background: #fff; border: 1px solid #e1e4e8; border-radius: 8px; padding: 20px; margin-bottom: 25px; box-shadow: 0 2px 5px rgba(0,0,0,0.02);">
+                <h3 style="color: #2c3e50; margin-top: 0;">{p['title']}</h3>
+                <p><strong>Titolo SEO:</strong> {p['seo_title']}</p>
+                <p><strong>Meta Description:</strong> {p['seo_description']}</p>
+                <div style="background: #f9f9f9; padding: 15px; border-radius: 6px; border: 1px solid #eee; max-height: 200px; overflow-y: auto; margin: 15px 0; font-size: 13px;">
+                    {p['body_html']}
+                </div>
+                <form action="/approve" method="post" style="display:inline;">
+                    <input type="hidden" name="draft_id" value="{p['draft_id']}">
+                    <button type="submit" style="background: #10b981; color: white; padding: 10px 18px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold;">✅ Approva e Salva su Shopify</button>
+                </form>
+            </div>
+            """
+
+        return f"""
+        <html>
+            <head><title>Revisione Prodotti - Caffè Sansone</title></head>
+            <body style="font-family: Arial; background: #f4f6f8; padding: 30px;">
+                <div style="max-width: 900px; margin: auto;">
+                    <h2>📋 Revisione Bozze Prodotti ({len(previews)} trovati)</h2>
+                    <p>Controlla le modifiche generate dall'IA. Clicca su approva per applicarle definitivamente sul tuo negozio.</p>
+                    <div style="margin: 20px 0;"><a href="/" style="text-decoration: none; color: #2c3e50; font-weight: bold;">← Torna alla Dashboard</a></div>
+                    {cards_html}
+                </div>
+            </body>
+        </html>
+        """
     except Exception as e:
         return JSONResponse(status_code=500, content={"detail": str(e)})
 
-@app.post("/optimize")
-def optimize_product(product_id: str = Form(...)):
+@app.post("/prepare-blog", response_class=HTMLResponse)
+def prepare_blog(topic: str = Form(...)):
     try:
-        products = agent.get_products(limit=100)
-        target_product = None
-        for p in products:
-            if str(p.get("id")) == str(product_id):
-                target_product = p
-                break
-        
-        if not target_product:
-            raise HTTPException(status_code=404, detail="Prodotto non trovato su Shopify.")
-            
-        optimized_data = agent.optimize_coffee_content(target_product)
-        if not optimized_data:
-            raise HTTPException(status_code=500, detail="Errore durante la generazione dei contenuti con l'IA.")
-            
-        success = agent.update_product_seo_and_description(product_id, optimized_data, tag_to_add="HowTo Ottimizzato")
-        if not success:
-            raise HTTPException(status_code=500, detail="Errore durante il salvataggio su Shopify.")
-            
-        return {"status": "success", "message": f"Prodotto specialty {product_id} ottimizzato con guida a scomparsa e tag 'HowTo Ottimizzato'!"}
+        blog_data = agent.prepare_blog_post(topic)
+        draft_id = f"blog_{abs(hash(topic))}"
+        PENDING_APPROVALS[draft_id] = {
+            "type": "blog",
+            "data": blog_data
+        }
+
+        return f"""
+        <html>
+            <head><title>Revisione Articolo Blog - Caffè Sansone</title></head>
+            <body style="font-family: Arial; background: #f4f6f8; padding: 30px;">
+                <div style="max-width: 900px; margin: auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
+                    <h2>✍️ Revisione Bozza Articolo Blog</h2>
+                    <p>Controlla l'articolo generato dall'IA prima di pubblicarlo ufficialmente sul blog di Shopify.</p>
+                    <hr style="border:0; border-top: 1px solid #eaeaea; margin: 20px 0;">
+                    
+                    <h3 style="color: #2c3e50;">{blog_data.get('title')}</h3>
+                    <p><strong>Estratto (Summary):</strong> {blog_data.get('summary')}</p>
+                    <p><strong>Tag consigliati:</strong> {blog_data.get('tags')}</p>
+                    
+                    <div style="background: #f9f9f9; padding: 20px; border-radius: 6px; border: 1px solid #eee; margin: 20px 0; max-height: 350px; overflow-y: auto;">
+                        {blog_data.get('body_html')}
+                    </div>
+                    
+                    <form action="/approve" method="post" style="display:inline;">
+                        <input type="hidden" name="draft_id" value="{draft_id}">
+                        <button type="submit" style="background: #10b981; color: white; padding: 12px 20px; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 15px;">🚀 Approva e Pubblica sul Blog</button>
+                    </form>
+                    <a href="/" style="margin-left: 15px; text-decoration: none; color: #666; font-weight: bold;">Annulla</a>
+                </div>
+            </body>
+        </html>
+        """
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"detail": str(e)})
+
+@app.post("/approve", response_class=HTMLResponse)
+def approve_draft(draft_id: str = Form(...)):
+    if draft_id not in PENDING_APPROVALS:
+        return """
+        <html><body style="font-family: Arial; padding: 40px; text-align: center;">
+            <h3>Bozza non trovata o già approvata/scaduta.</h3>
+            <a href="/" style="color: #2c3e50; font-weight: bold;">← Torna alla Dashboard</a>
+        </body></html>
+        """
+    
+    item = PENDING_APPROVALS.pop(draft_id)
+    item_type = item.get("type")
+
+    try:
+        if item_type == "product":
+            p_id = item.get("product_id")
+            seo_data = item.get("data")
+            success = agent.update_product_seo_and_description(p_id, seo_data, tag_to_add="HowTo Ottimizzato")
+            if not success:
+                raise Exception("Errore durante il salvataggio su Shopify.")
+            msg = "Prodotto ottimizzato, aggiornato con box collassabile e pubblicato con successo su Shopify!"
+        elif item_type == "blog":
+            blog_data = item.get("data")
+            article = agent.publish_blog_post(blog_data)
+            msg = f"Articolo '{article.get('title')}' pubblicato con successo sul blog di Shopify!"
+        else:
+            raise Exception("Tipo di elemento non valido.")
+
+        return f"""
+        <html>
+            <head><title>Operazione Completata</title></head>
+            <body style="font-family: Arial; background: #f4f6f8; padding: 50px; text-align: center;">
+                <div style="max-width: 600px; margin: auto; background: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
+                    <h2 style="color: #10b981;">✨ Operazione Riuscita!</h2>
+                    <p style="font-size: 16px; color: #333; margin: 20px 0;">{msg}</p>
+                    <a href="/" style="display: inline-block; margin-top: 20px; background: #2c3e50; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: bold;">Torna alla Dashboard</a>
+                </div>
+            </body>
+        </html>
+        """
     except Exception as e:
         return JSONResponse(status_code=500, content={"detail": str(e)})

@@ -115,43 +115,37 @@ class ShopifyCoffeeAgent:
         else:
             raise Exception(f"Errore di comunicazione con l'API GraphQL di Shopify: {response.text}")
 
-    def optimize_coffee_content(self, product_data_or_title, current_body=None, variants=None):
-        if isinstance(product_data_or_title, dict):
-            product_data = product_data_or_title
-        else:
-            product_data = {
-                "title": product_data_or_title,
-                "body_html": current_body,
-                "variants": variants or []
-            }
-
+    def append_howto_to_product(self, product_data):
         title = product_data.get("title")
-        body = product_data.get("body_html", "") or ""
+        current_body = product_data.get("body_html", "") or ""
         var_list = product_data.get("variants", [])
 
-        system_prompt = """Sei un maestro torrefattore ed esperto di caffè specialty, micro-torrefazione artigianale e metodi di estrazione avanzati per Caffè Sansone.
+        # Se il blocco collassabile è già presente, evitiamo di duplicarlo
+        if "Guida alla preparazione e estrazione ottimale" in current_body:
+            return {
+                "body_html": current_body,
+                "howto_schema": {
+                    "@context": "https://schema.org",
+                    "@type": "HowTo",
+                    "name": f"Guida alla preparazione di {title}",
+                    "description": f"Istruzioni passo-passo per esaltare le note aromatiche di {title}.",
+                    "step": [
+                        {
+                            "@type": "HowToStep",
+                            "name": "Macinatura ed Estrazione",
+                            "text": "Segui i consigli indicati nella scheda del prodotto per una tazza perfetta."
+                        }
+                    ]
+                }
+            }
 
-Scrivi descrizioni avvincenti, competenti e orientate all'eccellenza per un e-commerce di caffè d'alta qualità. La voce del brand è autorevole, appassionata, trasparente e focalizzata sulla tracciabilità e sulla qualità in tazza.
+        system_prompt = """Sei un maestro torrefattore ed esperto di caffè specialty per Caffè Sansone.
+Il tuo compito è prendere la descrizione HTML attuale di un prodotto e **mantenerla intatta**, aggiungendo esclusivamente in fondo un blocco HTML nativo a scomparsa (fisarmonica) elegante e coerente per la guida di preparazione.
 
-Metti in evidenza:
-- profilo aromatico, note di degustazione e origine dei chicchi;
-- metodo di lavorazione (es. lavato, naturale, honey) se presente;
-- grado di macinatura o formato in chicchi;
-- consigli specifici per l'estrazione ottimale (temperatura dell'acqua, ratio, macchine consigliate come espresso, moka, filtro V60, aeropress o cold brew);
-- la freschezza della micro-torrefazione artigianale napoletana.
+REGOLA ASSOLUTA SULLA SEO E SUL TESTO ESISTENTE:
+- Non modificare, riscrivere o cancellare in alcun modo il testo o i tag HTML già presenti nella descrizione attuale del prodotto.
+- Aggiungi in coda solo ed esclusivamente il blocco <details> strutturato esattamente così:
 
-REGOLA FONDAMENTALE SUI LINK E DATI:
-Non inventare mai caratteristiche, origini, altitudini, varietà botaniche o note sensoriali non presenti nelle informazioni fornite. Se un dato non è disponibile, omettilo con eleganza.
-
-La descrizione HTML deve essere ordinata e pulita:
-- un'introduzione coinvolgente con <p>;
-- titoli <h2> descrittivi (es. Profilo Aromatico, Consigli di Estrazione);
-- elenchi puntati con <ul> e <li>;
-- parole chiave in <strong>.
-Non utilizzare <h1>.
-
-IMPORTANTE - AGGIUNTA DELLA GUIDA A SCOMPARSA (COLLAPSIBLE / ACCORDION):
-Alla fine della descrizione `body_html`, devi SEMPRE includere un blocco HTML nativo a scomparsa (fisarmonica) strutturato esattamente così:
 <details style="margin: 20px 0; border: 1px solid #e5e5e5; border-radius: 8px; padding: 15px; background: #fafafa;">
   <summary style="font-weight: bold; cursor: pointer; color: #2c3e50; font-size: 1.05rem;">☕ Guida alla preparazione e estrazione ottimale</summary>
   <div style="margin-top: 12px; font-size: 0.95rem; color: #444;">
@@ -163,29 +157,19 @@ Alla fine della descrizione `body_html`, devi SEMPRE includere un blocco HTML na
   </div>
 </details>
 
-REGOLE SEO:
-- seo_title: massimo 60 caratteri, ottimizzato per caffè specialty;
-- seo_description: tra 140 e 155 caratteri, descrittiva e orientata alla conversione.
-
 REGOLE TASSATIVE PER L'OUTPUT JSON:
-Devi restituire ESCLUSIVAMENTE un oggetto JSON valido contenente queste precise chiavi di primo livello:
-1. "seo_title" (stringa)
-2. "seo_description" (stringa)
-3. "body_html" (stringa HTML comprensiva del blocco <details> finale)
-4. "faq_schema" (array di oggetti JSON strutturati con `@type: "Question"`, `name` e `acceptedAnswer`)
-5. "howto_schema" (oggetto JSON strutturato come Schema.org HowTo, contenente `name`, `description` e un array `step` dove ogni passo ha `@type: "HowToStep"`, `name` e `text`).
+Devi restituire ESCLUSIVAMENTE un oggetto JSON valido con queste chiavi:
+1. "body_html" (stringa HTML: l'intera descrizione originale + il blocco <details> aggiunto alla fine)
+2. "howto_schema" (oggetto JSON strutturato come Schema.org HowTo, con `name`, `description` e un array `step` contenente oggetti con `@type: "HowToStep"`, `name` e `text`).
 """
 
         user_prompt = f"""
-Analizza e crea i contenuti ottimizzati per il seguente caffè specialty di Caffè Sansone.
+Nome prodotto: {title}
 
-Nome prodotto:
-{title}
+Descrizione attuale da preservare integralmente:
+{current_body}
 
-Descrizione attuale:
-{body or "Nessuna descrizione disponibile"}
-
-Varianti del prodotto:
+Varianti:
 {json.dumps(var_list, ensure_ascii=False)}
 """
 
@@ -196,44 +180,48 @@ Varianti del prodotto:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                temperature=0.3,
+                temperature=0.2,
                 response_format={"type": "json_object"}
             )
-            raw_content = response.choices[0].message.content.strip()
-            data = json.loads(raw_content)
+            data = json.loads(response.choices[0].message.content.strip())
             
-            if not data.get("faq_schema") or not isinstance(data.get("faq_schema"), list):
-                data["faq_schema"] = [{
-                    "@type": "Question",
-                    "name": f"Come conservare al meglio il caffè {title}?",
-                    "acceptedAnswer": {
-                        "@type": "Answer",
-                        "text": "Consigliamo di conservare i chicchi in un luogo fresco e asciutto, lontano da fonti di calore e luce, preferibilmente nella confezione originale dotata di valvola di freschezza."
-                    }
-                }]
-
-            if not data.get("howto_schema") or not isinstance(data.get("howto_schema"), dict):
-                data["howto_schema"] = {
-                    "@context": "https://schema.org",
-                    "@type": "HowTo",
-                    "name": f"Guida alla preparazione di {title}",
-                    "description": f"Istruzioni passo-passo per esaltare le note aromatiche di {title}.",
-                    "step": [
-                        {
-                            "@type": "HowToStep",
-                            "name": "Macinatura",
-                            "text": "Macina i chicchi subito prima dell'estrazione in base al metodo di infusione scelto."
-                        }
-                    ]
-                }
-
+            # Fallback di sicurezza se l'IA restituisce una descrizione vuota
+            if not data.get("body_html"):
+                data["body_html"] = current_body
+                
             return data
         except Exception as e:
-            print(f"Errore durante la generazione dei contenuti con l'IA: {e}")
+            print(f"Errore generazione HowTo: {e}")
             return None
 
+    def get_creative_blog_ideas(self):
+        """Genera spunti originali e mai banali per articoli blog sul caffè specialty."""
+        system_prompt = """Sei il consulente di marketing e content strategy per Caffè Sansone, micro-torrefazione artigianale di Napoli.
+Genera 4 spunti originali, di nicchia e di grande interesse per un articolo di blog sul caffè specialty. Evita argomenti troppo generici o già visti.
+Spaziate tra: chimica dell'acqua nell'estrazione, abbonamenti di caffè, cultura dei bar storici napoletani vs specialty moderni, fermentazioni sperimentali nei chicchi, caffè e abbinamenti gastronomici inusuali, o manutenzione della moka.
+
+RESTUISCI ESCLUSIVAMENTE UN OGGETTO JSON con una chiave "ideas" che contiene un array di 4 oggetti, ciascuno con:
+- "title" (titolo accattivante dell'articolo proposto)
+- "angle" (breve spiegazione del perché questo argomento è originale e attraente per i clienti)
+"""
+        try:
+            response = self.ai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": "Proponi 4 spunti freschi e originali per il blog."}
+                ],
+                temperature=0.7,
+                response_format={"type": "json_object"}
+            )
+            return json.loads(response.choices[0].message.content.strip()).get("ideas", [])
+        except Exception as e:
+            return [
+                {"title": "L'importanza della mineralizzazione dell'acqua nell'estrazione del V60", "angle": Focus tecnico sulla chimica in tazza."},
+                {"title": "Dal chicco alla tazzina: viaggio nelle fermentazioni anaerobiche", "angle": Scoperta dei processi di lavorazione innovativi."}
+            ]
+
     def prepare_blog_post(self, topic: str):
-        """Genera la bozza di un articolo blog tramite OpenAI senza pubblicarla subito."""
         system_prompt = """Sei un copywriter esperto di caffè specialty e torrefazione artigianale per Caffè Sansone.
 Scrivi un articolo per il blog coinvolgente, approfondito, autorevole e ottimizzato in ottica SEO per gli amanti del caffè di alta qualità.
 
@@ -261,7 +249,6 @@ Restituisci ESCLUSIVAMENTE un oggetto JSON con queste chiavi:
             raise Exception(f"Errore IA generazione bozza blog: {e}")
 
     def publish_blog_post(self, blog_data: dict):
-        """Pubblica ufficialmente l'articolo sul blog di Shopify."""
         graphql_url = f"{self.shop_url}/admin/api/2024-07/graphql.json"
         
         blogs_query = """
@@ -281,7 +268,7 @@ Restituisci ESCLUSIVAMENTE un oggetto JSON con queste chiavi:
         
         blogs_edges = resp.json().get("data", {}).get("blogs", {}).get("edges", [])
         if not blogs_edges:
-            raise Exception("Nessun blog trovato su Shopify. Crea almeno un blog nel pannello di Shopify Admin.")
+            raise Exception("Nessun blog trovato su Shopify.")
         
         blog_id = blogs_edges[0]["node"]["id"]
 
@@ -378,7 +365,8 @@ Restituisci ESCLUSIVAMENTE un oggetto JSON con queste chiavi:
         requests.post(graphql_url, json={"query": mutation_alt, "variables": variables}, headers=self.headers)
         return True
 
-    def update_product_seo_and_description(self, product_id, seo_data, tag_to_add="HowTo Ottimizzato"):
+    def update_product_description_and_howto(self, product_id, update_data, tag_to_add="HowTo Ottimizzato"):
+        """Aggiorna la descrizione aggiungendo il blocco HTML e imposta il metafield HowTo SENZA toccare la SEO esistente."""
         graphql_url = f"{self.shop_url}/admin/api/2024-07/graphql.json"
         
         get_query = f"""
@@ -387,7 +375,7 @@ Restituisci ESCLUSIVAMENTE un oggetto JSON con queste chiavi:
             title
             tags
           }}
-        }}
+        }
         """
         resp = requests.post(graphql_url, json={"query": get_query}, headers=self.headers)
         tags_list = []
@@ -402,6 +390,7 @@ Restituisci ESCLUSIVAMENTE un oggetto JSON con queste chiavi:
         if tag_to_add not in tags_list:
             tags_list.append(tag_to_add)
 
+        # Inviamo SOLO la descrizione HTML e i tag. NON tocchiamo l'oggetto 'seo' di Shopify così rimane intatto!
         mutation = """
         mutation productUpdate($input: ProductInput!) {
           productUpdate(input: $input) {
@@ -420,12 +409,8 @@ Restituisci ESCLUSIVAMENTE un oggetto JSON con queste chiavi:
         variables = {
             "input": {
                 "id": f"gid://shopify/Product/{product_id}",
-                "descriptionHtml": seo_data.get("body_html"),
-                "tags": tags_list,
-                "seo": {
-                    "title": seo_data.get("seo_title"),
-                    "description": seo_data.get("seo_description")
-                }
+                "descriptionHtml": update_data.get("body_html"),
+                "tags": tags_list
             }
         }
         
@@ -437,8 +422,9 @@ Restituisci ESCLUSIVAMENTE un oggetto JSON con queste chiavi:
             if user_errors:
                 return False
             
+            # Impostazione del Metafield HowTo Schema
             metafields_to_set = []
-            howto_obj = seo_data.get("howto_schema")
+            howto_obj = update_data.get("howto_schema")
             if howto_obj:
                 metafields_to_set.append({
                     "ownerId": f"gid://shopify/Product/{product_id}",
@@ -496,45 +482,63 @@ agent = ShopifyCoffeeAgent(
 
 @app.get("/", response_class=HTMLResponse)
 def read_root():
-    return """
+    # Otteniamo gli spunti strategici freschi per il blog
+    ideas = agent.get_creative_blog_ideas()
+    ideas_html = ""
+    for idx, idea in enumerate(ideas):
+        t = idea.get("title", "")
+        a = idea.get("angle", "")
+        ideas_html += f"""
+        <div style="background: white; border: 1px solid #e1e4e8; padding: 12px; border-radius: 6px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;">
+            <div>
+                <strong>{t}</strong><br><span style="font-size: 12px; color: #666;">{a}</span>
+            </div>
+            <form action="/prepare-blog" method="post" style="margin: 0;">
+                <input type="hidden" name="topic" value="{t}">
+                <button type="submit" style="background: #27ae60; color: white; border: none; padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold;">Usa questo spunto</button>
+            </form>
+        </div>
+        """
+
+    return f"""
     <html>
         <head>
             <title>Caffè Sansone - AI Control Center</title>
             <style>
-                body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f4f6f8; color: #333; margin: 0; padding: 30px; }
-                .container { max-width: 900px; margin: auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
-                h2 { color: #2c3e50; margin-top: 0; border-bottom: 2px solid #eaeaea; padding-bottom: 15px; }
-                .card { background: #fafbfc; padding: 20px; border-radius: 8px; margin-bottom: 25px; border: 1px solid #e1e4e8; }
-                .card h3 { margin-top: 0; color: #24292e; }
-                label { display: block; margin-bottom: 8px; font-weight: 600; font-size: 14px; }
-                input[type="text"] { width: 100%; padding: 10px; margin-bottom: 15px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; box-sizing: border-box; }
+                body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f4f6f8; color: #333; margin: 0; padding: 30px; }}
+                .container {{ max-width: 900px; margin: auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }}
+                h2 {{ color: #2c3e50; margin-top: 0; border-bottom: 2px solid #eaeaea; padding-bottom: 15px; }}
+                .card {{ background: #fafbfc; padding: 20px; border-radius: 8px; margin-bottom: 25px; border: 1px solid #e1e4e8; }}
+                .card h3 {{ margin-top: 0; color: #24292e; }}
+                label {{ display: block; margin-bottom: 8px; font-weight: 600; font-size: 14px; }}
+                input[type="text"] {{ width: 100%; padding: 10px; margin-bottom: 15px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; box-sizing: border-box; }}
                 button { padding: 12px 20px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 600; transition: background 0.2s; }
                 .btn-primary { background: #2c3e50; color: white; }
                 .btn-primary:hover { background: #1a252f; }
-                .btn-success { background: #10b981; color: white; }
-                .btn-success:hover { background: #059669; }
             </style>
         </head>
         <body>
             <div class="container">
                 <h2>☕ Caffè Sansone - Dashboard Control Center</h2>
-                <p>Gestisci l'ottimizzazione dei prodotti e la creazione di articoli con revisione preventiva prima della pubblicazione.</p>
+                <p>Gestione pulita: la SEO attuale non viene toccata. Vengono aggiunti solo il box HowTo, i JSON strutturati e gli articoli blog con spunti strategici originali.</p>
                 
                 <div class="card">
-                    <h3>1. Ottimizzazione Prodotti (Primi 3 in coda)</h3>
-                    <p style="font-size: 13px; color: #666; margin-bottom: 15px;">Genera la bozza con descrizione ottimizzata, box a scomparsa e Schema HowTo da revisionare prima di salvarla su Shopify.</p>
+                    <h3>1. Integrazione HowTo Prodotti (Primi 3 in coda)</h3>
+                    <p style="font-size: 13px; color: #666; margin-bottom: 15px;">Aggiunge il box a scomparsa in fondo alla descrizione esistente e aggiorna il JSON Schema HowTo senza alterare titoli o descrizioni SEO già impostate.</p>
                     <form action="/prepare-products" method="get">
-                        <button type="submit" class="btn-primary">🔍 Genera e Revisiona Primi 3 Prodotti</button>
+                        <button type="submit" class="btn-primary">🔍 Aggiungi HowTo ai Primi 3 Prodotti (Revisione)</button>
                     </form>
                 </div>
 
                 <div class="card">
-                    <h3>2. Generatore Articoli Blog</h3>
-                    <p style="font-size: 13px; color: #666; margin-bottom: 15px;">Crea una bozza di articolo per il blog con l'IA e approvala prima di renderla pubblica online.</p>
-                    <form action="/prepare-blog" method="post">
-                        <label>Argomento o Titolo dell'articolo:</label>
-                        <input type="text" name="topic" placeholder="es. Come abbinare i dolci natalizi al caffè specialty" required />
-                        <button type="submit" class="btn-success">✍️ Genera Bozza Articolo</button>
+                    <h3>2. Generatore Articoli Blog & Spunti Strategici</h3>
+                    <p style="font-size: 13px; color: #666; margin-bottom: 15px;">Ecco gli spunti freschi creati oggi dall'IA per il tuo blog. Clicca su uno spunto per generare la bozza completa, oppure inserisci un argomento personalizzato:</p>
+                    {ideas_html}
+                    
+                    <form action="/prepare-blog" method="post" style="margin-top: 15px;">
+                        <label>Oppure scrivi un argomento personalizzato:</label>
+                        <input type="text" name="topic" placeholder="es. Come conservare l'aroma del caffè in estate" required />
+                        <button type="submit" class="btn-primary" style="background: #27ae60;">✍️ Genera Bozza Blog Personalizzata</button>
                     </form>
                 </div>
             </div>
@@ -552,7 +556,7 @@ def prepare_products():
         if not target_products:
             return """
             <html><body style="font-family: Arial; padding: 40px; text-align: center;">
-                <h3>Nessun prodotto trovato da ottimizzare!</h3>
+                <h3>Nessun prodotto trovato da aggiornare!</h3>
                 <p>Tutti i prodotti hanno già il tag 'HowTo Ottimizzato'.</p>
                 <a href="/" style="color: #2c3e50; font-weight: bold;">← Torna alla Dashboard</a>
             </body></html>
@@ -561,20 +565,18 @@ def prepare_products():
         previews = []
         for prod in target_products:
             p_id = prod.get("id")
-            optimized_data = agent.optimize_coffee_content(prod)
-            if optimized_data:
+            update_data = agent.append_howto_to_product(prod)
+            if update_data:
                 draft_id = f"prod_{p_id}"
                 PENDING_APPROVALS[draft_id] = {
                     "type": "product",
                     "product_id": p_id,
-                    "data": optimized_data
+                    "data": update_data
                 }
                 previews.append({
                     "draft_id": draft_id,
                     "title": prod.get("title"),
-                    "seo_title": optimized_data.get("seo_title"),
-                    "seo_description": optimized_data.get("seo_description"),
-                    "body_html": optimized_data.get("body_html")
+                    "body_html": update_data.get("body_html")
                 })
         
         cards_html = ""
@@ -582,25 +584,24 @@ def prepare_products():
             cards_html += f"""
             <div style="background: #fff; border: 1px solid #e1e4e8; border-radius: 8px; padding: 20px; margin-bottom: 25px; box-shadow: 0 2px 5px rgba(0,0,0,0.02);">
                 <h3 style="color: #2c3e50; margin-top: 0;">{p['title']}</h3>
-                <p><strong>Titolo SEO:</strong> {p['seo_title']}</p>
-                <p><strong>Meta Description:</strong> {p['seo_description']}</p>
-                <div style="background: #f9f9f9; padding: 15px; border-radius: 6px; border: 1px solid #eee; max-height: 200px; overflow-y: auto; margin: 15px 0; font-size: 13px;">
+                <p style="font-size: 13px; color: #10b981; font-weight: bold;">ℹ️ La SEO attuale rimane invariata. Verrà inserito il box HowTo in fondo alla descrizione e aggiornato il JSON Schema.</p>
+                <div style="background: #f9f9f9; padding: 15px; border-radius: 6px; border: 1px solid #eee; max-height: 250px; overflow-y: auto; margin: 15px 0; font-size: 13px;">
                     {p['body_html']}
                 </div>
                 <form action="/approve" method="post" style="display:inline;">
                     <input type="hidden" name="draft_id" value="{p['draft_id']}">
-                    <button type="submit" style="background: #10b981; color: white; padding: 10px 18px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold;">✅ Approva e Salva su Shopify</button>
+                    <button type="submit" style="background: #10b981; color: white; padding: 10px 18px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold;">✅ Approva e Aggiorna su Shopify</button>
                 </form>
             </div>
             """
 
         return f"""
         <html>
-            <head><title>Revisione Prodotti - Caffè Sansone</title></head>
+            <head><title>Revisione HowTo Prodotti - Caffè Sansone</title></head>
             <body style="font-family: Arial; background: #f4f6f8; padding: 30px;">
                 <div style="max-width: 900px; margin: auto;">
-                    <h2>📋 Revisione Bozze Prodotti ({len(previews)} trovati)</h2>
-                    <p>Controlla le modifiche generate dall'IA. Clicca su approva per applicarle definitivamente sul tuo negozio.</p>
+                    <h2>📋 Revisione Inserimento HowTo ({len(previews)} prodotti)</h2>
+                    <p>Controlla che il box a scomparsa sia aggiunto correttamente in fondo alla descrizione senza alterare i tuoi testi o la SEO.</p>
                     <div style="margin: 20px 0;"><a href="/" style="text-decoration: none; color: #2c3e50; font-weight: bold;">← Torna alla Dashboard</a></div>
                     {cards_html}
                 </div>
@@ -626,7 +627,7 @@ def prepare_blog(topic: str = Form(...)):
             <body style="font-family: Arial; background: #f4f6f8; padding: 30px;">
                 <div style="max-width: 900px; margin: auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
                     <h2>✍️ Revisione Bozza Articolo Blog</h2>
-                    <p>Controlla l'articolo generato dall'IA prima di pubblicarlo ufficialmente sul blog di Shopify.</p>
+                    <p>Controlla l'articolo generato dall'IA basato sullo spunto scelto prima di pubblicarlo sul blog di Shopify.</p>
                     <hr style="border:0; border-top: 1px solid #eaeaea; margin: 20px 0;">
                     
                     <h3 style="color: #2c3e50;">{blog_data.get('title')}</h3>
@@ -665,11 +666,11 @@ def approve_draft(draft_id: str = Form(...)):
     try:
         if item_type == "product":
             p_id = item.get("product_id")
-            seo_data = item.get("data")
-            success = agent.update_product_seo_and_description(p_id, seo_data, tag_to_add="HowTo Ottimizzato")
+            update_data = item.get("data")
+            success = agent.update_product_description_and_howto(p_id, update_data, tag_to_add="HowTo Ottimizzato")
             if not success:
                 raise Exception("Errore durante il salvataggio su Shopify.")
-            msg = "Prodotto ottimizzato, aggiornato con box collassabile e pubblicato con successo su Shopify!"
+            msg = "Blocco HowTo aggiunto in coda alla descrizione e JSON Schema aggiornato con successo! (La SEO precedente è rimasta intatta)."
         elif item_type == "blog":
             blog_data = item.get("data")
             article = agent.publish_blog_post(blog_data)

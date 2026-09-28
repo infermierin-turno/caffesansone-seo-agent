@@ -33,11 +33,8 @@ class ShopifyCoffeeAgent:
             "Accept": "application/json"
         }
         try:
-            print(f"[SHOPIFY AUTH] Tentativo di richiesta token a: {auth_url} con client_id: {self.client_id[:6]}...")
+            print(f"[SHOPIFY AUTH] Tentativo di richiesta token a: {auth_url}")
             response = requests.post(auth_url, json=payload, headers=headers)
-            print(f"[SHOPIFY AUTH] Status Code risposta token: {response.status_code}")
-            print(f"[SHOPIFY AUTH] Body risposta token: {response.text}")
-            
             if response.status_code == 200:
                 data = response.json()
                 token = data.get("access_token")
@@ -121,23 +118,7 @@ class ShopifyCoffeeAgent:
         else:
             raise Exception(f"Errore di comunicazione con l'API GraphQL di Shopify: {response.text}")
 
-    def get_pending_products(self, limit=3):
-        all_products = self.get_products(limit=50)
-        pending = []
-        for p in all_products:
-            tags = p.get("tags", [])
-            if isinstance(tags, str):
-                tags_list = [t.strip() for t in tags.split(",")]
-            else:
-                tags_list = tags
-            
-            if "Ottimizzato IA" not in tags_list:
-                pending.append(p)
-                if len(pending) >= limit:
-                    break
-        return pending
-
-    def optimize_divise_content(self, product_data_or_title, current_body=None, variants=None):
+    def optimize_coffee_content(self, product_data_or_title, current_body=None, variants=None):
         if isinstance(product_data_or_title, dict):
             product_data = product_data_or_title
         else:
@@ -151,73 +132,54 @@ class ShopifyCoffeeAgent:
         body = product_data.get("body_html", "") or ""
         var_list = product_data.get("variants", [])
 
-        system_prompt = """Sei un copywriter esperto di abbigliamento professionale e divise per i settori sanitario, estetico, sala, cucina, ristorazione e hospitality.
+        system_prompt = """Sei un maestro torrefattore ed esperto di caffè specialty, micro-torrefazione artigianale e metodi di estrazione avanzati per Caffè Sansone.
 
-Scrivi descrizioni per un e-commerce professionale. La voce del brand è competente, concreta, affidabile e rassicurante. Il tono è professionale ma naturale, diretto e comprensibile. Usa frasi brevi, verbi attivi e informazioni utili per aiutare il cliente nella scelta.
+Scrivi descrizioni avvincenti, competenti e orientate all'eccellenza per un e-commerce di caffè d'alta qualità. La voce del brand è autorevole, appassionata, trasparente e focalizzata sulla tracciabilità e sulla qualità in tazza.
 
 Metti in evidenza:
-- comfort e libertà di movimento;
-- vestibilità;
-- tessuti e composizione;
-- resistenza ai lavaggi;
-- facilità di manutenzione;
-- tasche, chiusure, elasticità e dettagli funzionali se presenti nel testo originale;
-- utilizzo professionale consigliato;
-- possibilità di personalizzazione tranne che per scarpe e pantaloni;
-- informazioni utili per favorire la decisione d’acquisto;
-- il problema o bisogno risolto dal prodotto;
-- contesti professionali adatti.
+- profilo aromatico, note di degustazione e origine dei chicchi;
+- metodo di lavorazione (es. lavato, naturale, honey) se presente;
+- grado di macinatura o formato in chicchi;
+- consigli specifici per l'estrazione ottimale (temperatura dell'acqua, ratio, macchine consigliate come espresso, moka, filtro V60, aeropress o cold brew);
+- la freschezza della micro-torrefazione artigianale napoletana.
 
-REGOLA FONDAMENTALE SUI LINK:
-Se nella descrizione attuale del prodotto è presente un link (ad esempio un URL o un file PDF della guida alle taglie), DEVI COPIARLO ESATTAMENTE così come si trova, senza modificarlo, senza inventarlo e senza sostituirlo con altri indirizzi. Se non è presente alcun link nel testo originale, non inserire alcun link.
+REGOLA FONDAMENTALE SUI LINK E DATI:
+Non inventare mai caratteristiche, origini, altitudini, varietà botaniche o note sensoriali non presenti nelle informazioni fornite. Se un dato non è disponibile, omettilo con eleganza.
 
-REGOLA FONDAMENTALE GENERALE:
-Non inventare mai caratteristiche, materiali, certificazioni, proprietà tecniche, vestibilità, colori, misure o prestazioni non presenti nelle informazioni fornite.
-
-Non descrivere un prodotto come antibatterico, antimacchia, ignifugo, impermeabile, elasticizzato, certificato, traspirante o adatto a uno specifico utilizzo se queste caratteristiche non sono esplicitamente indicate.
-
-Se un'informazione non è disponibile, omettila. Non fare supposizioni e non presentare come certe informazioni generiche normalmente associate a quel tipo di prodotto.
-
-La descrizione HTML deve essere ordinata e legibile e può contenere:
-- un'introduzione con <p>;
-- titoli <h2> descrittivi;
+La descrizione HTML deve essere ordinata e pulita:
+- un'introduzione coinvolgente con <p>;
+- titoli <h2> descrittivi (es. Profilo Aromatico, Consigli di Estrazione);
 - elenchi puntati con <ul> e <li>;
-- parole importanti in <strong>;
-- tag HTML <a> esclusivamente per riportare fedelmente eventuali link già presenti nei dati originali.
-
-Non utilizzare <h1>. Non inserire markdown, emoji, shortcode o codice JavaScript nel corpo HTML.
+- parole chiave in <strong>.
+Non utilizzare <h1>.
 
 REGOLE SEO:
-- seo_title: massimo 60 caratteri, chiaro e descrittivo;
-- seo_description: idealmente tra 140 e 155 caratteri, naturale e utile per il cliente;
-- non inserire parole chiave in modo artificiale.
+- seo_title: massimo 60 caratteri, ottimizzato per caffè specialty;
+- seo_description: tra 140 e 155 caratteri, descrittiva e orientata alla conversione.
 
 REGOLE TASSATIVE PER L'OUTPUT JSON:
 Devi restituire ESCLUSIVAMENTE un oggetto JSON valido contenente queste precise chiavi di primo livello:
 1. "seo_title" (stringa)
 2. "seo_description" (stringa)
 3. "body_html" (stringa HTML)
-4. "faq_schema" (array di oggetti JSON, obbligatorio, strutturato esattamente con `@type: "Question"`, `name` e `acceptedAnswer` con `@type: "Answer"` e `text`).
+4. "faq_schema" (array di oggetti JSON strutturati con `@type: "Question"`, `name` e `acceptedAnswer`)
+5. "howto_schema" (oggetto JSON strutturato come Schema.org HowTo, contenente `name`, `description` e un array `step` dove ogni passo ha `@type: "HowToStep"`, `name` e `text`).
 
-Esempio di struttura richiesta:
+Esempio di struttura richiesta per howto_schema:
 {
-  "seo_title": "...",
-  "seo_description": "...",
-  "body_html": "<p>...</p>",
-  "faq_schema": [
+  "name": "Come preparare al meglio...",
+  "description": "Guida passo-passo per un'estrazione perfetta...",
+  "step": [
     {
-      "@type": "Question",
-      "name": "Domanda...",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Risposta..."
-      }
+      "@type": "HowToStep",
+      "name": "Preparazione dell'acqua",
+      "text": "Usa acqua a basso residuo fisso..."
     }
   ]
 }"""
 
         user_prompt = f"""
-Analizza e riscrivi il seguente prodotto per il nostro e-commerce.
+Analizza e crea i contenuti ottimizzati per il seguente caffè specialty di Caffè Sansone.
 
 Nome prodotto:
 {title}
@@ -242,23 +204,41 @@ Varianti del prodotto:
             raw_content = response.choices[0].message.content.strip()
             data = json.loads(raw_content)
             
+            # Fallback di sicurezza per le FAQ se mancano
             if not data.get("faq_schema") or not isinstance(data.get("faq_schema"), list):
-                fallback_faqs = []
-                if var_list:
-                    variants_text = ", ".join([v.get("title", "") for v in var_list if v.get("title")])
-                    fallback_faqs.append({
-                        "@type": "Question",
-                        "name": f"Quali varianti sono disponibili per {title}?",
-                        "acceptedAnswer": {
-                            "@type": "Answer",
-                            "text": f"Il prodotto {title} è disponibile nelle seguenti varianti: {variants_text}."
+                data["faq_schema"] = [{
+                    "@type": "Question",
+                    "name": f"Come conservare al meglio il caffè {title}?",
+                    "acceptedAnswer": {
+                        "@type": "Answer",
+                        "text": "Consigliamo di conservare i chicchi in un luogo fresco e asciutto, lontano da fonti di calore e luce, preferibilmente nella confezione originale dotata di valvola di freschezza."
+                    }
+                }]
+
+            # Fallback di sicurezza per l'HowTo se manca
+            if not data.get("howto_schema") or not isinstance(data.get("howto_schema"), dict):
+                data["howto_schema"] = {
+                    "@context": "https://schema.org",
+                    "@type": "HowTo",
+                    "name": f"Guida alla preparazione di {title}",
+                    "description": f"Istruzioni passo-passo per esaltare le note aromatiche di {title}.",
+                    "step": [
+                        {
+                            "@type": "HowToStep",
+                            "name": "Macinatura",
+                            "text": "Macina i chicchi subito prima dell'estrazione in base al metodo di infusione scelto."
+                        },
+                        {
+                            "@type": "HowToStep",
+                            "name": "Estrazione",
+                            "text": "Procedi all'estrazione seguendo i tempi e le proporzioni ideali per valorizzare il profilo aromatico."
                         }
-                    })
-                data["faq_schema"] = fallback_faqs
+                    ]
+                }
 
             return data
         except Exception as e:
-            print(f"Errore durante la generazione o il parsing JSON dall'IA: {e}")
+            print(f"Errore durante la generazione dei contenuti con l'IA: {e}")
             return None
 
     def update_product_image_alt_texts(self, product_id, product_title):
@@ -304,7 +284,7 @@ Varianti del prodotto:
         media_inputs = []
         for i, edge in enumerate(edges):
             img_id = edge.get("node", {}).get("id")
-            alt_text = f"{product_title} - Vista {i+1} abbigliamento professionale"
+            alt_text = f"{product_title} - Caffè Specialty Sansone Vista {i+1}"
             media_inputs.append({
                 "id": img_id,
                 "alt": alt_text,
@@ -332,7 +312,7 @@ Varianti del prodotto:
         """
         resp = requests.post(graphql_url, json={"query": get_query}, headers=self.headers)
         tags_list = []
-        product_title = "Prodotto Professionale"
+        product_title = "Caffè Specialty"
         if resp.status_code == 200:
             node = resp.json().get("data", {}).get("product", {})
             if node:
@@ -385,8 +365,30 @@ Varianti del prodotto:
                 print(f"[ERRORE GRAPHQL PRODOTTO] {user_errors}")
                 return False
             
+            # Salvataggio Metafield FAQ e HowTo Schema
+            metafields_to_set = []
+            
             faq_obj = seo_data.get("faq_schema")
             if faq_obj:
+                metafields_to_set.append({
+                    "ownerId": f"gid://shopify/Product/{product_id}",
+                    "namespace": "custom",
+                    "key": "faq_schema",
+                    "type": "json",
+                    "value": json.dumps(faq_obj, ensure_ascii=False)
+                })
+
+            howto_obj = seo_data.get("howto_schema")
+            if howto_obj:
+                metafields_to_set.append({
+                    "ownerId": f"gid://shopify/Product/{product_id}",
+                    "namespace": "custom",
+                    "key": "howto_schema",
+                    "type": "json",
+                    "value": json.dumps(howto_obj, ensure_ascii=False)
+                })
+
+            if metafields_to_set:
                 metafield_mutation = """
                 mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
                   metafieldsSet(metafields: $metafields) {
@@ -403,18 +405,7 @@ Varianti del prodotto:
                   }
                 }
                 """
-                metafield_variables = {
-                    "metafields": [
-                        {
-                            "ownerId": f"gid://shopify/Product/{product_id}",
-                            "namespace": "custom",
-                            "key": "faq_schema",
-                            "type": "json",
-                            "value": json.dumps(faq_obj, ensure_ascii=False)
-                        }
-                    ]
-                }
-                
+                metafield_variables = {"metafields": metafields_to_set}
                 requests.post(graphql_url, json={"query": metafield_mutation, "variables": metafield_variables}, headers=self.headers)
 
             self.update_product_image_alt_texts(product_id, product_title)
@@ -438,10 +429,10 @@ agent = ShopifyCoffeeAgent(
 def read_root():
     return """
     <html>
-        <head><title>Caffè Sansone AI Agent</title></head>
+        <head><title>Caffè Sansone AI Agent - Specialty Coffee</title></head>
         <body style="font-family: Arial; padding: 40px;">
-            <h2>Agent Shopify & OpenAI Attivo (OAuth Client Credentials)</h2>
-            <p>Il servizio è pronto per elaborare i prodotti.</p>
+            <h2>Agent Caffè Sansone Attivo (SEO, FAQ & HowTo Guide)</h2>
+            <p>Il servizio OAuth è operativo e pronto per popolare le guide e i metafield dei caffè specialty.</p>
         </body>
     </html>
     """
@@ -459,7 +450,7 @@ def optimize_product(product_id: str = Form(...)):
         if not target_product:
             raise HTTPException(status_code=404, detail="Prodotto non trovato su Shopify.")
             
-        optimized_data = agent.optimize_divise_content(target_product)
+        optimized_data = agent.optimize_coffee_content(target_product)
         if not optimized_data:
             raise HTTPException(status_code=500, detail="Errore durante la generazione dei contenuti con l'IA.")
             
@@ -467,6 +458,6 @@ def optimize_product(product_id: str = Form(...)):
         if not success:
             raise HTTPException(status_code=500, detail="Errore durante il salvataggio su Shopify.")
             
-        return {"status": "success", "message": f"Prodotto {product_id} ottimizzato con successo!"}
+        return {"status": "success", "message": f"Prodotto specialty {product_id} ottimizzato con guide HowTo e FAQ!"}
     except Exception as e:
         return JSONResponse(status_code=500, content={"detail": str(e)})

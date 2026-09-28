@@ -478,36 +478,33 @@ agent = ShopifyCoffeeAgent(
 def read_root():
     ideas = agent.get_creative_blog_ideas()
     ideas_html = ""
-    for idx, idea in enumerate(ideas):
+    for idea in ideas:
         t = idea.get("title", "")
         a = idea.get("angle", "")
-        ideas_html += f"""
-        <div style="background: white; border: 1px solid #e1e4e8; padding: 12px; border-radius: 6px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;">
-            <div>
-                <strong>{t}</strong><br><span style="font-size: 12px; color: #666;">{a}</span>
-            </div>
-            <form action="/prepare-blog" method="post" style="margin: 0;">
-                <input type="hidden" name="topic" value="{t}">
-                <button type="submit" style="background: #27ae60; color: white; border: none; padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold;">Usa questo spunto</button>
-            </form>
-        </div>
-        """
+        ideas_html += (
+            '<div style="background: white; border: 1px solid #e1e4e8; padding: 12px; border-radius: 6px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;">'
+            f'<div><strong>{t}</strong><br><span style="font-size: 12px; color: #666;">{a}</span></div>'
+            '<form action="/prepare-blog" method="post" style="margin: 0;">'
+            f'<input type="hidden" name="topic" value="{t}">'
+            '<button type="submit" style="background: #27ae60; color: white; border: none; padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold;">Usa questo spunto</button>'
+            '</form></div>'
+        )
 
-    return f"""
+    html_content = """
     <html>
         <head>
             <title>Caffè Sansone - AI Control Center</title>
             <style>
-                body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f4f6f8; color: #333; margin: 0; padding: 30px; }}
-                .container {{ max-width: 900px; margin: auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }}
-                h2 {{ color: #2c3e50; margin-top: 0; border-bottom: 2px solid #eaeaea; padding-bottom: 15px; }}
-                .card {{ background: #fafbfc; padding: 20px; border-radius: 8px; margin-bottom: 25px; border: 1px solid #e1e4e8; }}
-                .card h3 {{ margin-top: 0; color: #24292e; }}
-                label {{ display: block; margin-bottom: 8px; font-weight: 600; font-size: 14px; }}
-                input[type="text"] {{ width: 100%; padding: 10px; margin-bottom: 15px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; box-sizing: border-box; }}
-                button {{ padding: 12px 20px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 600; transition: background 0.2s; }}
-                .btn-primary {{ background: #2c3e50; color: white; }}
-                .btn-primary:hover {{ background: #1a252f; }}
+                body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f4f6f8; color: #333; margin: 0; padding: 30px; }
+                .container { max-width: 900px; margin: auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+                h2 { color: #2c3e50; margin-top: 0; border-bottom: 2px solid #eaeaea; padding-bottom: 15px; }
+                .card { background: #fafbfc; padding: 20px; border-radius: 8px; margin-bottom: 25px; border: 1px solid #e1e4e8; }
+                .card h3 { margin-top: 0; color: #24292e; }
+                label { display: block; margin-bottom: 8px; font-weight: 600; font-size: 14px; }
+                input[type="text"] { width: 100%; padding: 10px; margin-bottom: 15px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; box-sizing: border-box; }
+                button { padding: 12px 20px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 600; transition: background 0.2s; }
+                .btn-primary { background: #2c3e50; color: white; }
+                .btn-primary:hover { background: #1a252f; }
             </style>
         </head>
         <body>
@@ -526,7 +523,7 @@ def read_root():
                 <div class="card">
                     <h3>2. Generatore Articoli Blog & Spunti Strategici</h3>
                     <p style="font-size: 13px; color: #666; margin-bottom: 15px;">Spunti professionali verificati creati dall'IA per il tuo blog. Clicca su uno spunto per generare la bozza completa o inserisci un argomento:</p>
-                    {ideas_html}
+                    __IDEAS_HTML__
                     
                     <form action="/prepare-blog" method="post" style="margin-top: 15px;">
                         <label>Oppure scrivi un argomento personalizzato:</label>
@@ -538,6 +535,7 @@ def read_root():
         </body>
     </html>
     """
+    return html_content.replace("__IDEAS_HTML__", ideas_html)
 
 @app.get("/prepare-products", response_class=HTMLResponse)
 def prepare_products():
@@ -574,19 +572,16 @@ def prepare_products():
         
         cards_html = ""
         for p in previews:
-            cards_html += f"""
-            <div style="background: #fff; border: 1px solid #e1e4e8; border-radius: 8px; padding: 20px; margin-bottom: 25px; box-shadow: 0 2px 5px rgba(0,0,0,0.02);">
-                <h3 style="color: #2c3e50; margin-top: 0;">{p['title']}</h3>
-                <p style="font-size: 13px; color: #10b981; font-weight: bold;">ℹ️ La SEO attuale e i testi originali sono intatti. Verrà inserito il box HowTo verificato in fondo.</p>
-                <div style="background: #f9f9f9; padding: 15px; border-radius: 6px; border: 1px solid #eee; max-height: 250px; overflow-y: auto; margin: 15px 0; font-size: 13px;">
-                    {p['body_html']}
-                </div>
-                <form action="/approve" method="post" style="display:inline;">
-                    <input type="hidden" name="draft_id" value="{p['draft_id']}">
-                    <button type="submit" style="background: #10b981; color: white; padding: 10px 18px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold;">✅ Approva e Aggiorna su Shopify</button>
-                </form>
-            </div>
-            """
+            cards_html += (
+                '<div style="background: #fff; border: 1px solid #e1e4e8; border-radius: 8px; padding: 20px; margin-bottom: 25px; box-shadow: 0 2px 5px rgba(0,0,0,0.02);">'
+                f'<h3 style="color: #2c3e50; margin-top: 0;">{p["title"]}</h3>'
+                '<p style="font-size: 13px; color: #10b981; font-weight: bold;">ℹ️ La SEO attuale e i testi originali sono intatti. Verrà inserito il box HowTo verificato in fondo.</p>'
+                f'<div style="background: #f9f9f9; padding: 15px; border-radius: 6px; border: 1px solid #eee; max-height: 250px; overflow-y: auto; margin: 15px 0; font-size: 13px;">{p["body_html"]}</div>'
+                '<form action="/approve" method="post" style="display:inline;">'
+                f'<input type="hidden" name="draft_id" value="{p["draft_id"]}">'
+                '<button type="submit" style="background: #10b981; color: white; padding: 10px 18px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold;">✅ Approva e Aggiorna su Shopify</button>'
+                '</form></div>'
+            )
 
         return f"""
         <html>

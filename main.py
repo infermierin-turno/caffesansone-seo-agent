@@ -440,7 +440,7 @@ def read_root():
     """
 
 @app.get("/test-and-optimize-first3")
-def test_and_optimize-first3():
+def test_and_optimize_first3():
     try:
         products = agent.get_products(limit=50)
         pending_products = [p for p in products if "HowTo Ottimizzato" not in p.get("tags", [])]

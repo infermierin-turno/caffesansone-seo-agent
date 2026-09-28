@@ -490,7 +490,7 @@ def read_root():
             '</form></div>'
         )
 
-    html_content = """
+    html_template = """
     <html>
         <head>
             <title>Caffè Sansone - AI Control Center</title>
@@ -535,7 +535,7 @@ def read_root():
         </body>
     </html>
     """
-    return html_content.replace("__IDEAS_HTML__", ideas_html)
+    return html_template.replace("__IDEAS_HTML__", ideas_html)
 
 @app.get("/prepare-products", response_class=HTMLResponse)
 def prepare_products():

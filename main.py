@@ -131,35 +131,41 @@ class ShopifyCoffeeAgent:
                     "step": [
                         {
                             "@type": "HowToStep",
-                            "name": "Macinatura ed Estrazione",
-                            "text": "Segui i consigli indicati nella scheda del prodotto per una tazza perfetta."
+                            "name": "Dosaggio e Macinatura",
+                            "text": "Utilizzare il dosaggio ideale e una macinatura adeguata al metodo di estrazione scelto."
+                        },
+                        {
+                            "@type": "HowToStep",
+                            "name": "Estrazione e Temperatura",
+                            "text": "Prestare attenzione alla temperatura dell'acqua e ai tempi di infusione per esaltare le caratteristiche aromatiche."
                         }
                     ]
                 }
             }
 
         system_prompt = """Sei un maestro torrefattore ed esperto di caffè specialty per Caffè Sansone.
-Il tuo compito è attingere esclusivamente alla descrizione HTML attuale di un prodotto e mantenerla intatta senza inventare nulla, aggiungendo esclusivamente in fondo un blocco HTML nativo a scomparsa (fisarmonica) elegante e coerente basato rigorosamente sulle fonti certe e sulla storia del brand.
+Il tuo compito è analizzare il nome e la descrizione attuale del prodotto e aggiungere in coda un blocco HTML nativo a scomparsa (fisarmonica) con istruzioni di preparazione REALI, dettagliate e specifiche per questo caffè, senza usare segnaposto o puntini di sospensione.
 
 REGOLA ASSOLUTA SULLA SEO E SUL TESTO ESISTENTE:
 - Non modificare, riscrivere o cancellare in alcun modo il testo o i tag HTML già presenti nella descrizione attuale del prodotto.
-- Aggiungi in coda solo ed esclusivamente il blocco <details> strutturato esattamente così:
+- Aggiungi in coda solo ed esclusivamente il blocco <details> strutturato esattamente con questo formato HTML (riempiendolo con testi reali e professionali):
 
 <details style="margin: 20px 0; border: 1px solid #e5e5e5; border-radius: 8px; padding: 15px; background: #fafafa;">
   <summary style="font-weight: bold; cursor: pointer; color: #2c3e50; font-size: 1.05rem;">☕ Guida alla preparazione e estrazione ottimale</summary>
   <div style="margin-top: 12px; font-size: 0.95rem; color: #444;">
-    <p>Istruzioni dettagliate basate sul profilo di tostatura artigianale di Caffè Sansone...</p>
+    <p>Per esaltare al massimo le note aromatiche e il profilo di tostatura artigianale di questo caffè, consigliamo di seguire questi passaggi:</p>
     <ul style="padding-left: 20px; margin-top: 8px;">
-      <li><strong>Passo 1:</strong> ...</li>
-      <li><strong>Passo 2:</strong> ...</li>
+      <li><strong>Dosaggio e Macinatura:</strong> [Scrivi qui indicazioni precise sul rapporto caffè/acqua e sulla grana della macinatura]</li>
+      <li><strong>Temperatura dell'acqua:</strong> [Indica la temperatura ideale, es. 90-94°C]</li>
+      <li><strong>Estrazione:</strong> [Fornisci dettagli sul tempo di estrazione o sul metodo consigliato come V65, espresso o moka]</li>
     </ul>
   </div>
 </details>
 
 REGOLE TASSATIVE PER L'OUTPUT JSON:
 Devi restituire ESCLUSIVAMENTE un oggetto JSON valido con queste chiavi:
-1. "body_html" (stringa HTML: l'intera descrizione originale + il blocco <details> aggiunto alla fine)
-2. "howto_schema" (oggetto JSON strutturato come Schema.org HowTo, con name, description e un array step contenente oggetti con @type: "HowToStep", name e text).
+1. "body_html" (stringa HTML: l'intera descrizione originale + il blocco <details> compilato con contenuti reali, senza mai inserire '...' o segnaposti).
+2. "howto_schema" (oggetto JSON strutturato come Schema.org HowTo, con name, description e un array "step" contenente almeno 3 oggetti con @type: "HowToStep", name e text reali).
 """
 
         user_prompt = "Nome prodotto: " + str(title) + "\n\nDescrizione attuale da preservare integralmente:\n" + str(current_body) + "\n\nVarianti:\n" + json.dumps(var_list, ensure_ascii=False)
@@ -171,7 +177,7 @@ Devi restituire ESCLUSIVAMENTE un oggetto JSON valido con queste chiavi:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                temperature=0.1,
+                temperature=0.2,
                 response_format={"type": "json_object"}
             )
             data = json.loads(response.choices[0].message.content.strip())
@@ -496,7 +502,7 @@ def read_root():
         "<p>Gestione rigorosa e professionale: zero allucinazioni, rispetto totale della storia del brand e della SEO esistente.</p>"
         "<div class=\"card\">"
         "<h3>1. Integrazione HowTo Prodotti (Primi 3 in coda)</h3>"
-        "<p style=\"font-size: 13px; color: #666; margin-bottom: 15px;\">Aggiunge il box a scomparsa in fondo alla descrizione esistente basandosi solo su fonti certe e aggiorna il JSON Schema HowTo.</p>"
+        "<p style=\"font-size: 13px; color: #666; margin-bottom: 15px;\">Aggiunge il box a scomparsa con istruzioni dettagliate in fondo alla descrizione esistente e aggiorna il JSON Schema HowTo.</p>"
         "<form action=\"/prepare-products\" method=\"get\">"
         "<button type=\"submit\" class=\"btn-primary\">🔍 Aggiungi HowTo ai Primi 3 Prodotti (Revisione)</button>"
         "</form>"
@@ -554,7 +560,7 @@ def prepare_products():
             cards_html += (
                 '<div style="background: #fff; border: 1px solid #e1e4e8; border-radius: 8px; padding: 20px; margin-bottom: 25px; box-shadow: 0 2px 5px rgba(0,0,0,0.02);">'
                 '<h3 style="color: #2c3e50; margin-top: 0;">' + str(p["title"]) + '</h3>'
-                '<p style="font-size: 13px; color: #10b981; font-weight: bold;">ℹ️ La SEO attuale e i testi originali sono intatti. Verrà inserito il box HowTo verificato in fondo.</p>'
+                '<p style="font-size: 13px; color: #10b981; font-weight: bold;">ℹ️ La SEO attuale e i testi originali sono intatti. Verrà inserito il box HowTo dettagliato in fondo.</p>'
                 '<div style="background: #f9f9f9; padding: 15px; border-radius: 6px; border: 1px solid #eee; max-height: 250px; overflow-y: auto; margin: 15px 0; font-size: 13px;">' + str(p["body_html"]) + '</div>'
                 '<form action="/approve" method="post" style="display:inline;">'
                 '<input type="hidden" name="draft_id" value="' + str(p["draft_id"]) + '">'
@@ -568,7 +574,7 @@ def prepare_products():
             "<body style=\"font-family: Arial; background: #f4f6f8; padding: 30px;\">"
             "<div style=\"max-width: 900px; margin: auto;\">"
             "<h2>📋 Revisione Inserimento HowTo (" + str(len(previews)) + " prodotti)</h2>"
-            "<p>Controlla che il box a scomparsa sia aggiunto correttamente in fondo alla descrizione senza alterare i testi o la SEO.</p>"
+            "<p>Controlla che il box a scomparsa contenga tutti i passi dettagliati corretti prima dell'invio a Shopify.</p>"
             "<div style=\"margin: 20px 0;\"><a href=\"/\" style=\"text-decoration: none; color: #2c3e50; font-weight: bold;\">← Torna alla Dashboard</a></div>"
             + cards_html +
             "</div>"
@@ -637,7 +643,7 @@ def approve_draft(draft_id: str = Form(...)):
             success = agent.update_product_description_and_howto(p_id, update_data, tag_to_add="HowTo Ottimizzato")
             if not success:
                 raise Exception("Errore durante il salvataggio su Shopify.")
-            msg = "Blocco HowTo aggiunto in coda alla descrizione e JSON Schema aggiornato con successo! (La SEO precedente e i testi originali sono intatti)."
+            msg = "Blocco HowTo dettagliato aggiunto in coda alla descrizione e JSON Schema aggiornato con successo! (La SEO precedente e i testi originali sono intatti)."
         elif item_type == "blog":
             blog_data = item.get("data")
             article = agent.publish_blog_post(blog_data)

@@ -211,8 +211,13 @@ RESTUISCI ESCLUSIVAMENTE UN OGGETTO JSON con una chiave "ideas" che contiene un 
                 temperature=0.3,
                 response_format={"type": "json_object"}
             )
-            return json.loads(response.choices[0].message.content.strip()).get("ideas", [])
+            content = response.choices[0].message.content
+            if not content:
+                raise Exception("Risposta vuota da OpenAI")
+            parsed = json.loads(content.strip())
+            return parsed.get("ideas", [])
         except Exception as e:
+            print(f"Errore recupero spunti blog: {e}")
             return [
                 {"title": "L'importanza della mineralizzazione dell'acqua nell'estrazione del V60", "angle": "Focus tecnico sulla chimica in tazza."},
                 {"title": "Dal chicco alla tazzina: viaggio nei metodi di lavorazione lavati e naturali", "angle": "Approfondimento agronomico e di torrefazione."}
@@ -241,7 +246,14 @@ Restituisci ESCLUSIVAMENTE un oggetto JSON con queste chiavi:
                 temperature=0.2,
                 response_format={"type": "json_object"}
             )
-            return json.loads(response.choices[0].message.content.strip())
+            content = response.choices[0].message.content
+            if not content:
+                raise Exception("Risposta vuota da OpenAI per il post del blog.")
+            
+            data = json.loads(content.strip())
+            if not data or not isinstance(data, dict):
+                raise Exception("Formato JSON non valido restituito dall'IA.")
+            return data
         except Exception as e:
             raise Exception(f"Errore IA generazione bozza blog: {e}")
 
@@ -603,6 +615,9 @@ def prepare_products():
 def prepare_blog(topic: str = Form(...)):
     try:
         blog_data = agent.prepare_blog_post(topic)
+        if not blog_data:
+            raise Exception("Impossibile generare la bozza dell'articolo.")
+            
         draft_id = f"blog_{abs(hash(topic))}"
         PENDING_APPROVALS[draft_id] = {
             "type": "blog",
@@ -618,12 +633,12 @@ def prepare_blog(topic: str = Form(...)):
                     <p>Controlla l'articolo verificato generato dall'IA prima di pubblicarlo sul blog di Shopify.</p>
                     <hr style="border:0; border-top: 1px solid #eaeaea; margin: 20px 0;">
                     
-                    <h3 style="color: #2c3e50;">{blog_data.get('title')}</h3>
-                    <p><strong>Estratto (Summary):</strong> {blog_data.get('summary')}</p>
-                    <p><strong>Tag consigliati:</strong> {blog_data.get('tags')}</p>
+                    <h3 style="color: #2c3e50;">{blog_data.get('title', '')}</h3>
+                    <p><strong>Estratto (Summary):</strong> {blog_data.get('summary', '')}</p>
+                    <p><strong>Tag consigliati:</strong> {blog_data.get('tags', '')}</p>
                     
                     <div style="background: #f9f9f9; padding: 20px; border-radius: 6px; border: 1px solid #eee; margin: 20px 0; max-height: 350px; overflow-y: auto;">
-                        {blog_data.get('body_html')}
+                        {blog_data.get('body_html', '')}
                     </div>
                     
                     <form action="/approve" method="post" style="display:inline;">

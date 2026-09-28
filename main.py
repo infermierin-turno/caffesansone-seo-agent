@@ -357,16 +357,6 @@ Varianti del prodotto:
             
             metafields_to_set = []
             
-            faq_obj = seo_data.get("faq_schema")
-            if faq_obj:
-                metafields_to_set.append({
-                    "ownerId": f"gid://shopify/Product/{product_id}",
-                    "namespace": "custom",
-                    "key": "faq_prodotto",
-                    "type": "json",
-                    "value": json.dumps(faq_obj, ensure_ascii=False)
-                })
-
             howto_obj = seo_data.get("howto_schema")
             if howto_obj:
                 metafields_to_set.append({
@@ -391,18 +381,20 @@ Varianti del prodotto:
                       key
                       field
                       message
+                      code
                     }
                   }
                 }
                 """
                 metafield_variables = {"metafields": metafields_to_set}
                 meta_resp = requests.post(graphql_url, json={"query": metafield_mutation, "variables": metafield_variables}, headers=self.headers)
-                print(f"[DEBUG SHOPIFY METAFIELDS] Status: {meta_resp.status_code}, Body: {meta_resp.text}")
+                print(f"[DEBUG SHOPIFY METAFIELDS RAW RESPONSE]: {meta_resp.text}")
                 
                 meta_json = meta_resp.json()
                 meta_errors = meta_json.get("data", {}).get("metafieldsSet", {}).get("userErrors", [])
                 if meta_errors:
-                    print(f"[ERRORE GRAPHQL METAFIELDS USER ERRORS]: {meta_errors}")
+                    print(f"[ERRORE CRITICO METAFIELDS USER ERRORS]: {meta_errors}")
+                    return False
 
             self.update_product_image_alt_texts(product_id, product_title)
             return True

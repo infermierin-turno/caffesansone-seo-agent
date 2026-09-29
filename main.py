@@ -1,5 +1,6 @@
 import os
 import json
+import random
 import requests
 from fastapi import FastAPI, HTTPException, Request, Form
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -191,21 +192,37 @@ Devi restituire ESCLUSIVAMENTE un oggetto JSON valido con queste chiavi:
             return None
 
     def get_creative_blog_ideas(self):
+        # Lista estesa di categorie e angolazioni per garantire rotazione e novità continue
+        focus_topics = [
+            "la chimica dell'acqua e dei minerali nell'estrazione del caffè",
+            "le differenze sensoriali tra i processi di lavorazione (naturali, lavati, honey)",
+            "il profilo di tostatura medio-chiaro per metodi filtro vs espresso napoletano",
+            "storia e evoluzione della cultura del caffè a Napoli tra tradizione e innovazione",
+            "come conservare i chicchi di caffè specialty a casa per preservare i terpeni aromatici",
+            "il ruolo della granulometria e dei difetti del macinacaffè in tazza",
+            "degustazione bendata e ruota degli aromi: riconoscere note floreali e fruttate",
+            "la fisica della pressione e della pre-infusione nell'estrazione moderna"
+        ]
+        # Piglia casualmente 2 o 3 macro-temi per forzare l'IA a variare ogni volta
+        chosen_focus = random.sample(focus_topics, min(3, len(focus_topics)))
+
         system_prompt = """Sei il consulente di marketing e content strategy per Caffè Sansone, micro-torrefazione artigianale di Napoli.
-Genera 4 spunti originali, di nicchia e di grande interesse tecnico-culturale per un articolo di blog sul caffè specialty. Evita assolutamente qualsiasi allucinazione o invenzione commerciale priva di fondamento: basati su dati tecnici reali (estrazione, chimica dell'acqua, profili di tostatura, storia della torrefazione artigianale).
+Il tuo compito è generare 4 spunti originali, di nicchia e di grande interesse tecnico-culturale per un articolo di blog.
+Evita assolutamente argomenti banali o ripetitivi. Varia radicalmente i temi spaziando tra agronomia, chimica dell'estrazione, metodi di tostatura, manutenzione o storia del caffè.
+Fattore di diversificazione richiesto per questa sessione: concentra la creatività su questi ambiti: """ + ", ".join(chosen_focus) + """.
 
 RESTUISCI ESCLUSIVAMENTE UN OGGETTO JSON con una chiave "ideas" che contiene un array di 4 oggetti, ciascuno con:
-- "title" (titolo professionale e accattivante dell'articolo proposto)
-- "angle" (breve spiegazione del rigore tecnico e del valore storico per i clienti)
+- "title" (titolo professionale, nuovo e accattivante dell'articolo proposto)
+- "angle" (breve spiegazione del rigore tecnico e del valore specifico per i clienti)
 """
         try:
             response = self.ai_client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": "Proponi 4 spunti seri, tecnici e rigorosi per il blog."}
+                    {"role": "user", "content": "Genera 4 spunti unici, freschi e non ripetitivi per il blog."}
                 ],
-                temperature=0.3,
+                temperature=0.7,  # Temperatura leggermente alzata per stimolare la varietà creativa
                 response_format={"type": "json_object"}
             )
             content = response.choices[0].message.content
@@ -240,7 +257,7 @@ Restituisci ESCLUSIVAMENTE un oggetto JSON con queste chiavi:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                temperature=0.2,
+                temperature=0.3,
                 response_format={"type": "json_object"}
             )
             content = response.choices[0].message.content
@@ -509,7 +526,7 @@ def read_root():
         "</div>"
         "<div class=\"card\">"
         "<h3>2. Generatore Articoli Blog & Spunti Strategici</h3>"
-        "<p style=\"font-size: 13px; color: #666; margin-bottom: 15px;\">Spunti professionali verificati creati dall'IA per il tuo blog. Clicca su uno spunto per generare la bozza completa o inserisci un argomento:</p>"
+        "<p style=\"font-size: 13px; color: #666; margin-bottom: 15px;\">Spunti professionali variati e dinamici creati dall'IA per il tuo blog. Ricarica la pagina per vederne di nuovi:</p>"
         + ideas_html +
         "<form action=\"/prepare-blog\" method=\"post\" style=\"margin-top: 15px;\">"
         "<label>Oppure scrivi un argomento personalizzato:</label>"
@@ -586,7 +603,6 @@ def prepare_products():
 
 @app.get("/prepare-blog", response_class=RedirectResponse)
 def prepare_blog_get():
-    # Gestisce i tentativi di accesso via GET (es. bot di Google o navigazione diretta) reindirizzando alla home
     return RedirectResponse(url="/", status_code=303)
 
 @app.post("/prepare-blog", response_class=HTMLResponse)
@@ -632,7 +648,7 @@ def prepare_blog(topic: str = Form(...)):
 def approve_draft(draft_id: str = Form(...)):
     if draft_id not in PENDING_APPROVALS:
         return (
-            "<html><body style=\"font-family: Arial; padding: 40px; text-align: center;\">"
+            "<html><body style=\"font-family: Arial; padding: 400px; text-align: center;\">"
             "<h3>Bozza non trovata o già approvata/scaduta.</h3>"
             "<a href=\"/\" style=\"color: #2c3e50; font-weight: bold;\">← Torna alla Dashboard</a>"
             "</body></html>"

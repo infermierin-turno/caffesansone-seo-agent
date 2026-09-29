@@ -584,6 +584,11 @@ def prepare_products():
     except Exception as e:
         return JSONResponse(status_code=500, content={"detail": str(e)})
 
+@app.get("/prepare-blog", response_class=RedirectResponse)
+def prepare_blog_get():
+    # Gestisce i tentativi di accesso via GET (es. bot di Google o navigazione diretta) reindirizzando alla home
+    return RedirectResponse(url="/", status_code=303)
+
 @app.post("/prepare-blog", response_class=HTMLResponse)
 def prepare_blog(topic: str = Form(...)):
     try:

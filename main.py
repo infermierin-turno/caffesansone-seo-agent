@@ -276,7 +276,6 @@ Restituisci ESCLUSIVAMENTE un oggetto JSON con queste chiavi:
             data = json.loads(response.choices[0].message.content.strip())
             
             selected_ids = data.get("selected_ids", [])
-            # Mappa gli ID selezionati con i dettagli completi dei prodotti per mostrarli in anteprima
             chosen_details = []
             for p in merch_candidates:
                 if str(p["id"]) in [str(x) for x in selected_ids]:
@@ -296,7 +295,6 @@ Restituisci ESCLUSIVAMENTE un oggetto JSON con queste chiavi:
         graphql_url = self.shop_url + "/admin/api/2024-07/graphql.json"
         owner_gid = "gid://shopify/Product/" + str(product_id)
         
-        # Prepara la lista di GID Shopify per i metafield di tipo product_reference o list.product_reference
         product_gids = ["gid://shopify/Product/" + str(m_id) for m_id in merch_ids]
         
         metafields_to_set = [
@@ -351,15 +349,15 @@ Restituisci ESCLUSIVAMENTE un oggetto JSON con queste chiavi:
         ]
         chosen_focus = random.sample(focus_topics, min(3, len(focus_topics)))
 
-        system_prompt = """Sei il consulente di marketing e content strategy per Caffè Sansone, micro-torrefazione artigianale di Napoli.
-Il tuo compito è generare 4 spunti originali, di nicchia e di grande interesse tecnico-culturale per un articolo di blog.
-Evita assolutamente argomenti banali o ripetitivi. Varia radicalmente i temi spaziando tra agronomia, chimica dell'estrazione, metodi di tostatura, manutenzione o storia del caffè.
-Fattore di diversificazione richiesto per questa sessione: concentra la creatività su questi ambiti: """ + ", ".join(chosen_focus) + ""$.
-
-RESTUISCI ESCLUSIVAMENTE UN OGGETTO JSON con una chiave "ideas" che contiene un array di 4 oggetti, ciascuno con:
-- "title" (titolo professionale, nuovo e accattivante dell'articolo proposto)
-- "angle" (breve spiegazione del rigore tecnico e del valore specifico per i clienti)
-"""
+        system_prompt = (
+            "Sei il consulente di marketing e content strategy per Caffè Sansone, micro-torrefazione artigianale di Napoli.\n"
+            "Il tuo compito è generare 4 spunti originali, di nicchia e di grande interesse tecnico-culturale per un articolo di blog.\n"
+            "Evita assolutamente argomenti banali o ripetitivi. Varia radicalmente i temi spaziando tra agronomia, chimica dell'estrazione, metodi di tostatura, manutenzione o storia del caffè.\n"
+            "Fattore di diversificazione richiesto per questa sessione: concentra la creatività su questi ambiti: " + ", ".join(chosen_focus) + ".\n\n"
+            "RESTUISCI ESCLUSIVAMENTE UN OGGETTO JSON con una chiave \"ideas\" che contiene un array di 4 oggetti, ciascuno con:\n"
+            "- \"title\" (titolo professionale, nuovo e accattivante dell'articolo proposto)\n"
+            "- \"angle\" (breve spiegazione del rigore tecnico e del valore specifico per i clienti)"
+        )
         try:
             response = self.ai_client.chat.completions.create(
                 model="gpt-4o-mini",
@@ -690,7 +688,7 @@ def read_root():
         "<form action=\"/prepare-blog\" method=\"post\" style=\"margin-top: 15px;\">"
         "<label>Oppure scrivi un argomento personalizzato:</label>"
         "<input type=\"text\" name=\"topic\" placeholder=\"es. Metodi di estrazione specialty e profilo aromatico\" required />"
-        "<button type=\"submit\" class=\"btn-primary\" style=\"background: #27ae60;\">✍️ Genera Bozza Blog Professionale</button>"
+        "<button type=\"submit\" class=\"btn-primary\" style=\"background: #27ae60;\">✍️️ Genera Bozza Blog Professionale</button>"
         "</form>"
         "</div>"
         "</div>"

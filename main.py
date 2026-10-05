@@ -127,18 +127,23 @@ class ShopifyCoffeeAgent:
                 "howto_schema": {
                     "@context": "https://schema.org",
                     "@type": "HowTo",
-                    "name": "Guida alla preparazione di " + str(title),
-                    "description": "Istruzioni passo-passo per esaltare le note aromatiche di " + str(title) + ".",
+                    "name": "Preparazione del Caffè " + str(title),
+                    "description": "Guida dettagliata per preparare un caffè perfetto utilizzando " + str(title) + ".",
                     "step": [
                         {
                             "@type": "HowToStep",
                             "name": "Dosaggio e Macinatura",
-                            "text": "Utilizzare il dosaggio ideale e una macinatura adeguata al metodo di estrazione scelto."
+                            "text": "Utilizzare 7-9 grammi di caffè per dose, assicurandosi che la macinatura sia adeguata al metodo di estrazione scelto per esaltare " + str(title) + "."
                         },
                         {
                             "@type": "HowToStep",
-                            "name": "Estrazione e Temperatura",
-                            "text": "Prestare attenzione alla temperatura dell'acqua e ai tempi di infusione per esaltare le caratteristiche aromatiche."
+                            "name": "Temperatura dell'acqua",
+                            "text": "Riscaldare l'acqua a una temperatura compresa tra 90-94°C per garantire un'estrazione ideale."
+                        },
+                        {
+                            "@type": "HowToStep",
+                            "name": "Estrazione",
+                            "text": "Seguire i tempi di infusione o estrazione consigliati per esaltare le note aromatiche specifiche di questo specialty."
                         }
                     ]
                 }
@@ -166,7 +171,7 @@ REGOLA ASSOLUTA SULLA SEO E SUL TESTO ESISTENTE:
 REGOLE TASSATIVE PER L'OUTPUT JSON:
 Devi restituire ESCLUSIVAMENTE un oggetto JSON valido con queste chiavi:
 1. "body_html" (stringa HTML: l'intera descrizione originale + il blocco <details> compilato con contenuti reali, senza mai inserire '...' o segnaposti).
-2. "howto_schema" (oggetto JSON strutturato come Schema.org HowTo, con name, description e un array "step" contenente almeno 3 oggetti con @type: "HowToStep", name e text reali).
+2. "howto_schema" (oggetto JSON strutturato come Schema.org HowTo dinamico, con name impostato su "Preparazione del Caffè [Nome Prodotto]", description e un array "step" con almeno 3 oggetti HowToStep).
 """
 
         user_prompt = "Nome prodotto: " + str(title) + "\n\nDescrizione attuale da preservare integralmente:\n" + str(current_body) + "\n\nVarianti:\n" + json.dumps(var_list, ensure_ascii=False)
@@ -186,6 +191,11 @@ Devi restituire ESCLUSIVAMENTE un oggetto JSON valido con queste chiavi:
             if not data.get("body_html"):
                 data["body_html"] = current_body
                 
+            # Assicura che lo schema HowTo usi sempre il titolo reale del prodotto
+            if "howto_schema" in data and isinstance(data["howto_schema"], dict):
+                data["howto_schema"]["name"] = "Preparazione del Caffè " + str(title)
+                data["howto_schema"]["description"] = "Guida dettagliata per preparare un caffè perfetto utilizzando " + str(title) + "."
+
             return data
         except Exception as e:
             print("Errore generazione HowTo: " + str(e))

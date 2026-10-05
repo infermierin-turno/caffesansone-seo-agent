@@ -242,7 +242,6 @@ Devi restituire ESCLUSIVAMENTE un oggetto JSON valido con queste chiavi:
             
         all_prods = self.get_all_products(limit=50)
         
-        # Filtra i potenziali prodotti di merchandising/accessori escludendo il caffè stesso
         merch_candidates = []
         for p in all_prods:
             if str(p["id"]) != str(target_prod["id"]):
@@ -254,21 +253,12 @@ Devi restituire ESCLUSIVAMENTE un oggetto JSON valido con queste chiavi:
                 })
 
         system_prompt = """Sei il direttore commerciale di Caffè Sansone. 
-Il tuo compito è selezionare dal catalogo Shopify disponibile i 2 o 3 prodotti di merchandising o accessori (es. tazze, tazzine, gadget, macinini, teli) che meglio si abbinano a questo specifico caffè per un'efficace strategia di cross-selling.
+Il tuo compito è selezionare dal catalogo Shopify disponibile i 2 o 3 prodotti di merchandising o accessori (es. tazze, tazzine, gadget, macinini, teli) che meglio si abbinano a questo specifico caffè per l'inserimento come prodotti complementari/correlati tramite metafield.
 
 REGOLE TASSATIVE PER L'OUTPUT JSON:
 Restituisci ESCLUSIVAMENTE un oggetto JSON con queste chiavi:
-1. "updated_body_html" (stringa HTML: l'intera descrizione originale del caffè + un blocco HTML elegante in coda che consiglia i prodotti di merchandising scelti, inserendo link o riferimenti testuali ai prodotti del catalogo).
-Usa questo formato esatto per il box di cross-selling in coda:
-<div style="margin: 25px 0; padding: 20px; background: #fff8f6; border: 1px solid #ffd8cc; border-radius: 8px;">
-  <h4 style="margin-top: 0; color: #c0392b;">🎁 Perfetto da abbinare con:</h4>
-  <p style="font-size: 0.95rem; color: #555;">Per un'esperienza di degustazione completa, ti consigliamo di abbinare questo caffè con:</p>
-  <ul style="padding-left: 20px; margin-top: 8px; font-size: 0.95rem;">
-    <li><strong>[Nome Prodotto Merch 1]</strong> - [Breve motivazione dell'abbinamento]</li>
-    <li><strong>[Nome Prodotto Merch 2]</strong> - [Breve motivazione dell'abbinamento]</li>
-  </ul>
-</div>
-2. "merchandising_summary" (stringa con un breve commento strategico sulla scelta effettuata).
+1. "selected_ids" (array di stringhe contenente unicamente gli ID numerici dei 2 o 3 prodotti di merchandising scelti dal catalogo passato)
+2. "merchandising_summary" (stringa con un breve commento strategico sul perché sono stati scelti questi prodotti per questo caffè).
 """
 
         user_prompt = "Caffè di riferimento:\n" + json.dumps(target_prod, ensure_ascii=False) + "\n\nCatalogo Merchandising/Accessori disponibile su Shopify:\n" + json.dumps(merch_candidates, ensure_ascii=False)
@@ -285,17 +275,68 @@ Usa questo formato esatto per il box di cross-selling in coda:
             )
             data = json.loads(response.choices[0].message.content.strip())
             
-            if not data.get("updated_body_html"):
-                data["updated_body_html"] = target_prod.get("body_html", "")
+            selected_ids = data.get("selected_ids", [])
+            # Mappa gli ID selezionati con i dettagli completi dei prodotti per mostrarli in anteprima
+            chosen_details = []
+            for p in merch_candidates:
+                if str(p["id"]) in [str(x) for x in selected_ids]:
+                    chosen_details.append(p)
 
             return {
                 "product_id": target_prod["id"],
                 "title": target_prod["title"],
-                "body_html": data.get("updated_body_html"),
+                "selected_ids": [str(x) for x in selected_ids],
+                "chosen_details": chosen_details,
                 "summary": data.get("merchandising_summary", "")
             }
         except Exception as e:
             raise Exception("Errore IA suggerimento merchandising: " + str(e))
+
+    def update_product_merchandising_metafields(self, product_id, merch_ids):
+        graphql_url = self.shop_url + "/admin/api/2024-07/graphql.json"
+        owner_gid = "gid://shopify/Product/" + str(product_id)
+        
+        # Prepara la lista di GID Shopify per i metafield di tipo product_reference o list.product_reference
+        product_gids = ["gid://shopify/Product/" + str(m_id) for m_id in merch_ids]
+        
+        metafields_to_set = [
+            {
+                "ownerId": owner_gid,
+                "namespace": "custom",
+                "key": "complementary_products",
+                "type": "list.product_reference",
+                "value": json.dumps(product_gids)
+            }
+        ]
+
+        mutation = """
+        mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+          metafieldsSet(metafields: $metafields) {
+            metafields {
+              id
+              namespace
+              key
+              value
+            }
+            userErrors {
+              field
+              message
+              code
+            }
+          }
+        }
+        """
+        variables = {"metafields": metafields_to_set}
+        response = requests.post(graphql_url, json={"query": mutation, "variables": variables}, headers=self.headers)
+        
+        if response.status_code == 200:
+            result_json = response.json()
+            user_errors = result_json.get("data", {}).get("metafieldsSet", {}).get("userErrors", [])
+            if user_errors:
+                print("Errori metafieldsSet:", user_errors)
+                return False
+            return True
+        return False
 
     def get_creative_blog_ideas(self):
         focus_topics = [
@@ -313,7 +354,7 @@ Usa questo formato esatto per il box di cross-selling in coda:
         system_prompt = """Sei il consulente di marketing e content strategy per Caffè Sansone, micro-torrefazione artigianale di Napoli.
 Il tuo compito è generare 4 spunti originali, di nicchia e di grande interesse tecnico-culturale per un articolo di blog.
 Evita assolutamente argomenti banali o ripetitivi. Varia radicalmente i temi spaziando tra agronomia, chimica dell'estrazione, metodi di tostatura, manutenzione o storia del caffè.
-Fattore di diversificazione richiesto per questa sessione: concentra la creatività su questi ambiti: """ + ", ".join(chosen_focus) + """.
+Fattore di diversificazione richiesto per questa sessione: concentra la creatività su questi ambiti: """ + ", ".join(chosen_focus) + ""$.
 
 RESTUISCI ESCLUSIVAMENTE UN OGGETTO JSON con una chiave "ideas" che contiene un array di 4 oggetti, ciascuno con:
 - "title" (titolo professionale, nuovo e accattivante dell'articolo proposto)
@@ -572,56 +613,6 @@ Restituisci ESCLUSIVAMENTE un oggetto JSON con queste chiavi:
         else:
             return False
 
-    def update_product_plain(self, product_id, new_body_html, tag_to_add="Merchandising Consigliato"):
-        graphql_url = self.shop_url + "/admin/api/2024-07/graphql.json"
-        
-        get_query = "{\n  product(id: \"gid://shopify/Product/" + str(product_id) + "\") {\n    title\n    tags\n  }\n}"
-        resp = requests.post(graphql_url, json={"query": get_query}, headers=self.headers)
-        tags_list = []
-        product_title = "Caffè Specialty"
-        if resp.status_code == 200:
-            node = resp.json().get("data", {}).get("product", {})
-            if node:
-                product_title = node.get("title", product_title)
-                if node.get("tags"):
-                    tags_list = node.get("tags")
-        
-        if tag_to_add not in tags_list:
-            tags_list.append(tag_to_add)
-
-        mutation = """
-        mutation productUpdate($input: ProductInput!) {
-          productUpdate(input: $input) {
-            product {
-              id
-              title
-            }
-            userErrors {
-              field
-              message
-            }
-          }
-        }
-        """
-        
-        variables = {
-            "input": {
-                "id": "gid://shopify/Product/" + str(product_id),
-                "descriptionHtml": new_body_html,
-                "tags": tags_list
-            }
-        }
-        
-        response = requests.post(graphql_url, json={"query": mutation, "variables": variables}, headers=self.headers)
-        if response.status_code == 200:
-            result_data = response.json()
-            user_errors = result_data.get("data", {}).get("productUpdate", {}).get("userErrors", [])
-            if user_errors:
-                return False
-            self.update_product_image_alt_texts(product_id, product_title)
-            return True
-        return False
-
 shop_url = os.getenv("SHOP_URL", "https://348aca-2.myshopify.com")
 openai_api_key = os.getenv("OPENAI_API_KEY", "")
 client_id = os.getenv("SHOPIFY_CLIENT_ID", "")
@@ -683,12 +674,12 @@ def read_root():
         "</div>"
 
         "<div class=\"card\">"
-        "<h3>2. Suggerisci Merchandising in Cross-Selling per ID Prodotto</h3>"
-        "<p style=\"font-size: 13px; color: #666; margin-bottom: 15px;\">Analizza il catalogo Shopify per abbinare automaticamente gli accessori o il merchandising più idonei a questo caffè.</p>"
+        "<h3>2. Suggerisci Merchandising in Metafield (Prodotti Complementari)</h3>"
+        "<p style=\"font-size: 13px; color: #666; margin-bottom: 15px;\">Seleziona automaticamente gli accessori adatti e impostali nei metafield relazionali nativi di Shopify.</p>"
         "<form action=\"/prepare-merchandising-by-id\" method=\"get\">"
         "<label>ID Prodotto Caffè (Shopify):</label>"
         "<input type=\"text\" name=\"product_id\" placeholder=\"Inserisci l'ID del prodotto caffè...\" required />"
-        "<button type=\"submit\" class=\"btn-primary\" style=\"background: #e67e22;\">🎁 Suggerisci Merchandising (Revisione)</button>"
+        "<button type=\"submit\" class=\"btn-primary\" style=\"background: #e67e22;\">🎁 Suggerisci Merchandising (Metafield)</button>"
         "</form>"
         "</div>"
 
@@ -766,27 +757,32 @@ def prepare_merchandising_by_id(product_id: str):
         PENDING_APPROVALS[draft_id] = {
             "type": "merchandising",
             "product_id": res.get("product_id"),
-            "body_html": res.get("body_html")
+            "selected_ids": res.get("selected_ids")
         }
+
+        chosen_items_html = ""
+        for item in res.get("chosen_details", []):
+            chosen_items_html += '<li style="margin-bottom: 6px;"><strong>' + str(item.get("title")) + '</strong> <span style="color: #666; font-size: 12px;">(ID: ' + str(item.get("id")) + ')</span></li>'
 
         card_html = (
             '<div style="background: #fff; border: 1px solid #e1e4e8; border-radius: 8px; padding: 20px; margin-bottom: 25px; box-shadow: 0 2px 5px rgba(0,0,0,0.02);">'
             '<h3 style="color: #2c3e50; margin-top: 0;">' + str(res.get("title")) + ' (ID: ' + str(res.get("product_id")) + ')</h3>'
-            '<p style="font-size: 13px; color: #e67e22; font-weight: bold;">💡 Analisi Merchandising: ' + str(res.get("summary")) + '</p>'
-            '<div style="background: #f9f9f9; padding: 15px; border-radius: 6px; border: 1px solid #eee; max-height: 250px; overflow-y: auto; margin: 15px 0; font-size: 13px;">' + str(res.get("body_html")) + '</div>'
-            '<form action="/approve" method="post" style="display:inline;">'
+            '<p style="font-size: 13px; color: #e67e22; font-weight: bold;">💡 Analisi IA per i Metafield: ' + str(res.get("summary")) + '</p>'
+            '<p style="font-size: 13px; font-weight: bold; margin-top: 15px;">Prodotti di merchandising selezionati per il metafield relazionale:</p>'
+            '<ul style="padding-left: 20px; font-size: 13px; color: #444;">' + chosen_items_html + '</ul>'
+            '<form action="/approve" method="post" style="margin-top: 20px; display:inline;">'
             '<input type="hidden" name="draft_id" value="' + str(draft_id) + '">'
-            '<button type="submit" style="background: #e67e22; color: white; padding: 10px 18px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold;">✅ Approva e Pubblica Abbinamento su Shopify</button>'
+            '<button type="submit" style="background: #e67e22; color: white; padding: 10px 18px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold;">✅ Salva nei Metafield su Shopify</button>'
             '</form></div>'
         )
 
         return (
             "<html>"
-            "<head><title>Revisione Merchandising Cross-Selling - Caffè Sansone</title></head>"
+            "<head><title>Revisione Merchandising Metafield - Caffè Sansone</title></head>"
             "<body style=\"font-family: Arial; background: #f4f6f8; padding: 30px;\">"
             "<div style=\"max-width: 900px; margin: auto;\">"
-            "<h2>🎁 Revisione Consigli Merchandising</h2>"
-            "<p>Verifica l'anteprima del box di cross-selling generato dall'IA prima di aggiornare il prodotto.</p>"
+            "<h2>🎁 Revisione Collegamento Metafield Prodotti Complementari</h2>"
+            "<p>Verifica i prodotti di merchandising scelti prima di impostarli nei metafield nativi del prodotto.</p>"
             "<div style=\"margin: 20px 0;\"><a href=\"/\" style=\"text-decoration: none; color: #2c3e50; font-weight: bold;\">← Torna alla Dashboard</a></div>"
             + card_html +
             "</div>"
@@ -862,11 +858,11 @@ def approve_draft(draft_id: str = Form(...)):
             msg = "Blocco HowTo dettagliato aggiunto in coda alla descrizione e JSON Schema aggiornato con successo!"
         elif item_type == "merchandising":
             p_id = item.get("product_id")
-            body_html = item.get("body_html")
-            success = agent.update_product_plain(p_id, body_html, tag_to_add="Merchandising Consigliato")
+            selected_ids = item.get("selected_ids")
+            success = agent.update_product_merchandising_metafields(p_id, selected_ids)
             if not success:
-                raise Exception("Errore durante il salvataggio dei consigli di merchandising su Shopify.")
-            msg = "Box di cross-selling con i prodotti di merchandising aggiunto con successo alla descrizione del caffè!"
+                raise Exception("Errore durante il salvataggio dei metafield su Shopify.")
+            msg = "Prodotti di merchandising collegati con successo come prodotti complementari nei metafield nativi!"
         elif item_type == "blog":
             blog_data = item.get("data")
             pub_res = agent.publish_blog_post(blog_data)

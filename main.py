@@ -55,7 +55,6 @@ class ShopifyCoffeeAgent:
 
     def get_product_by_id(self, product_id):
         graphql_url = self.shop_url + "/admin/api/2024-07/graphql.json"
-        # Pulisce l'ID nel caso l'utente abbia inserito il formato gid o solo il numero
         numeric_id = str(product_id).split("/")[-1]
         gid = "gid://shopify/Product/" + numeric_id
         
@@ -105,6 +104,7 @@ class ShopifyCoffeeAgent:
             return {
                 "id": numeric_id,
                 "title": node.get("title"),
+                "handle": node.get("handle"),
                 "body_html": node.get("descriptionHtml"),
                 "tags": node.get("tags", []),
                 "variants": variants_list
@@ -112,7 +112,7 @@ class ShopifyCoffeeAgent:
         else:
             raise Exception("Errore di comunicazione con l'API GraphQL di Shopify: " + response.text)
 
-    def get_products(self, limit=50):
+    def get_all_products(self, limit=50):
         graphql_url = self.shop_url + "/admin/api/2024-07/graphql.json"
         query = """
         {
@@ -124,20 +124,7 @@ class ShopifyCoffeeAgent:
                 handle
                 descriptionHtml
                 tags
-                variants(first: 20) {
-                  edges {
-                    node {
-                      id
-                      title
-                      price
-                      sku
-                      selectedOptions {
-                        name
-                        value
-                      }
-                    }
-                  }
-                }
+                productType
               }
             }
           }
@@ -152,24 +139,13 @@ class ShopifyCoffeeAgent:
                 node = edge.get("node", {})
                 raw_id = node.get("id", "")
                 numeric_id = raw_id.split("/")[-1] if raw_id else ""
-                
-                variants_list = []
-                for v_edge in node.get("variants", {}).get("edges", []):
-                    v_node = v_edge.get("node", {})
-                    variants_list.append({
-                        "id": v_node.get("id"),
-                        "title": v_node.get("title"),
-                        "price": v_node.get("price"),
-                        "sku": v_node.get("sku"),
-                        "options": v_node.get("selectedOptions", [])
-                    })
-
                 products.append({
                     "id": numeric_id,
                     "title": node.get("title"),
+                    "handle": node.get("handle"),
                     "body_html": node.get("descriptionHtml"),
-                    "tags": node.get("tags", []),
-                    "variants": variants_list
+                    "product_type": node.get("productType"),
+                    "tags": node.get("tags", [])
                 })
             return products
         else:
@@ -258,6 +234,68 @@ Devi restituire ESCLUSIVAMENTE un oggetto JSON valido con queste chiavi:
         except Exception as e:
             print("Errore generazione HowTo: " + str(e))
             return None
+
+    def suggest_merchandising_for_product(self, product_id):
+        target_prod = self.get_product_by_id(product_id)
+        if not target_prod:
+            raise Exception("Prodotto caffè non trovato.")
+            
+        all_prods = self.get_all_products(limit=50)
+        
+        # Filtra i potenziali prodotti di merchandising/accessori escludendo il caffè stesso
+        merch_candidates = []
+        for p in all_prods:
+            if str(p["id"]) != str(target_prod["id"]):
+                merch_candidates.append({
+                    "id": p["id"],
+                    "title": p["title"],
+                    "handle": p["handle"],
+                    "type": p["product_type"]
+                })
+
+        system_prompt = """Sei il direttore commerciale di Caffè Sansone. 
+Il tuo compito è selezionare dal catalogo Shopify disponibile i 2 o 3 prodotti di merchandising o accessori (es. tazze, tazzine, gadget, macinini, teli) che meglio si abbinano a questo specifico caffè per un'efficace strategia di cross-selling.
+
+REGOLE TASSATIVE PER L'OUTPUT JSON:
+Restituisci ESCLUSIVAMENTE un oggetto JSON con queste chiavi:
+1. "updated_body_html" (stringa HTML: l'intera descrizione originale del caffè + un blocco HTML elegante in coda che consiglia i prodotti di merchandising scelti, inserendo link o riferimenti testuali ai prodotti del catalogo).
+Usa questo formato esatto per il box di cross-selling in coda:
+<div style="margin: 25px 0; padding: 20px; background: #fff8f6; border: 1px solid #ffd8cc; border-radius: 8px;">
+  <h4 style="margin-top: 0; color: #c0392b;">🎁 Perfetto da abbinare con:</h4>
+  <p style="font-size: 0.95rem; color: #555;">Per un'esperienza di degustazione completa, ti consigliamo di abbinare questo caffè con:</p>
+  <ul style="padding-left: 20px; margin-top: 8px; font-size: 0.95rem;">
+    <li><strong>[Nome Prodotto Merch 1]</strong> - [Breve motivazione dell'abbinamento]</li>
+    <li><strong>[Nome Prodotto Merch 2]</strong> - [Breve motivazione dell'abbinamento]</li>
+  </ul>
+</div>
+2. "merchandising_summary" (stringa con un breve commento strategico sulla scelta effettuata).
+"""
+
+        user_prompt = "Caffè di riferimento:\n" + json.dumps(target_prod, ensure_ascii=False) + "\n\nCatalogo Merchandising/Accessori disponibile su Shopify:\n" + json.dumps(merch_candidates, ensure_ascii=False)
+
+        try:
+            response = self.ai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.3,
+                response_format={"type": "json_object"}
+            )
+            data = json.loads(response.choices[0].message.content.strip())
+            
+            if not data.get("updated_body_html"):
+                data["updated_body_html"] = target_prod.get("body_html", "")
+
+            return {
+                "product_id": target_prod["id"],
+                "title": target_prod["title"],
+                "body_html": data.get("updated_body_html"),
+                "summary": data.get("merchandising_summary", "")
+            }
+        except Exception as e:
+            raise Exception("Errore IA suggerimento merchandising: " + str(e))
 
     def get_creative_blog_ideas(self):
         focus_topics = [
@@ -534,6 +572,56 @@ Restituisci ESCLUSIVAMENTE un oggetto JSON con queste chiavi:
         else:
             return False
 
+    def update_product_plain(self, product_id, new_body_html, tag_to_add="Merchandising Consigliato"):
+        graphql_url = self.shop_url + "/admin/api/2024-07/graphql.json"
+        
+        get_query = "{\n  product(id: \"gid://shopify/Product/" + str(product_id) + "\") {\n    title\n    tags\n  }\n}"
+        resp = requests.post(graphql_url, json={"query": get_query}, headers=self.headers)
+        tags_list = []
+        product_title = "Caffè Specialty"
+        if resp.status_code == 200:
+            node = resp.json().get("data", {}).get("product", {})
+            if node:
+                product_title = node.get("title", product_title)
+                if node.get("tags"):
+                    tags_list = node.get("tags")
+        
+        if tag_to_add not in tags_list:
+            tags_list.append(tag_to_add)
+
+        mutation = """
+        mutation productUpdate($input: ProductInput!) {
+          productUpdate(input: $input) {
+            product {
+              id
+              title
+            }
+            userErrors {
+              field
+              message
+            }
+          }
+        }
+        """
+        
+        variables = {
+            "input": {
+                "id": "gid://shopify/Product/" + str(product_id),
+                "descriptionHtml": new_body_html,
+                "tags": tags_list
+            }
+        }
+        
+        response = requests.post(graphql_url, json={"query": mutation, "variables": variables}, headers=self.headers)
+        if response.status_code == 200:
+            result_data = response.json()
+            user_errors = result_data.get("data", {}).get("productUpdate", {}).get("userErrors", [])
+            if user_errors:
+                return False
+            self.update_product_image_alt_texts(product_id, product_title)
+            return True
+        return False
+
 shop_url = os.getenv("SHOP_URL", "https://348aca-2.myshopify.com")
 openai_api_key = os.getenv("OPENAI_API_KEY", "")
 client_id = os.getenv("SHOPIFY_CLIENT_ID", "")
@@ -586,16 +674,26 @@ def read_root():
         
         "<div class=\"card\">"
         "<h3>1. Ricerca e Inserimento HowTo per ID Prodotto</h3>"
-        "<p style=\"font-size: 13px; color: #666; margin-bottom: 15px;\">Inserisci l'ID numerico del prodotto di Shopify (es. <code>7891234567890</code>) per generare e revisionare il blocco HowTo mirato.</p>"
+        "<p style=\"font-size: 13px; color: #666; margin-bottom: 15px;\">Inserisci l'ID numerico del prodotto di Shopify per generare e revisionare il blocco HowTo e lo Schema.org mirato.</p>"
         "<form action=\"/prepare-product-by-id\" method=\"get\">"
-        "<label>ID Prodotto Shopify:</label>"
+        "<label>ID Prodotto Caffè (Shopify):</label>"
         "<input type=\"text\" name=\"product_id\" placeholder=\"Inserisci l'ID del prodotto...\" required />"
         "<button type=\"submit\" class=\"btn-primary\">🔍 Cerca e Genera HowTo (Revisione)</button>"
         "</form>"
         "</div>"
 
         "<div class=\"card\">"
-        "<h3>2. Generatore Articoli Blog & Spunti Strategici</h3>"
+        "<h3>2. Suggerisci Merchandising in Cross-Selling per ID Prodotto</h3>"
+        "<p style=\"font-size: 13px; color: #666; margin-bottom: 15px;\">Analizza il catalogo Shopify per abbinare automaticamente gli accessori o il merchandising più idonei a questo caffè.</p>"
+        "<form action=\"/prepare-merchandising-by-id\" method=\"get\">"
+        "<label>ID Prodotto Caffè (Shopify):</label>"
+        "<input type=\"text\" name=\"product_id\" placeholder=\"Inserisci l'ID del prodotto caffè...\" required />"
+        "<button type=\"submit\" class=\"btn-primary\" style=\"background: #e67e22;\">🎁 Suggerisci Merchandising (Revisione)</button>"
+        "</form>"
+        "</div>"
+
+        "<div class=\"card\">"
+        "<h3>3. Generatore Articoli Blog & Spunti Strategici</h3>"
         "<p style=\"font-size: 13px; color: #666; margin-bottom: 15px;\">Spunti professionali variati e dinamici creati dall'IA per il tuo blog. Ricarica la pagina per vederne di nuovi:</p>"
         + ideas_html +
         "<form action=\"/prepare-blog\" method=\"post\" style=\"margin-top: 15px;\">"
@@ -640,7 +738,7 @@ def prepare_product_by_id(product_id: str):
             '<div style="background: #f9f9f9; padding: 15px; border-radius: 6px; border: 1px solid #eee; max-height: 250px; overflow-y: auto; margin: 15px 0; font-size: 13px;">' + str(update_data.get("body_html")) + '</div>'
             '<form action="/approve" method="post" style="display:inline;">'
             '<input type="hidden" name="draft_id" value="' + str(draft_id) + '">'
-            '<button type=\"submit\" style="background: #10b981; color: white; padding: 10px 18px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold;">✅ Approva e Aggiorna su Shopify</button>'
+            '<button type="submit" style="background: #10b981; color: white; padding: 10px 18px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold;">✅ Approva e Aggiorna su Shopify</button>'
             '</form></div>'
         )
 
@@ -651,6 +749,44 @@ def prepare_product_by_id(product_id: str):
             "<div style=\"max-width: 900px; margin: auto;\">"
             "<h2>📋 Revisione Inserimento HowTo</h2>"
             "<p>Controlla che il box a scomparsa contenga tutti i passi dettagliati corretti prima dell'invio a Shopify.</p>"
+            "<div style=\"margin: 20px 0;\"><a href=\"/\" style=\"text-decoration: none; color: #2c3e50; font-weight: bold;\">← Torna alla Dashboard</a></div>"
+            + card_html +
+            "</div>"
+            "</body>"
+            "</html>"
+        )
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"detail": str(e)})
+
+@app.get("/prepare-merchandising-by-id", response_class=HTMLResponse)
+def prepare_merchandising_by_id(product_id: str):
+    try:
+        res = agent.suggest_merchandising_for_product(product_id)
+        draft_id = "merch_" + str(res.get("product_id"))
+        PENDING_APPROVALS[draft_id] = {
+            "type": "merchandising",
+            "product_id": res.get("product_id"),
+            "body_html": res.get("body_html")
+        }
+
+        card_html = (
+            '<div style="background: #fff; border: 1px solid #e1e4e8; border-radius: 8px; padding: 20px; margin-bottom: 25px; box-shadow: 0 2px 5px rgba(0,0,0,0.02);">'
+            '<h3 style="color: #2c3e50; margin-top: 0;">' + str(res.get("title")) + ' (ID: ' + str(res.get("product_id")) + ')</h3>'
+            '<p style="font-size: 13px; color: #e67e22; font-weight: bold;">💡 Analisi Merchandising: ' + str(res.get("summary")) + '</p>'
+            '<div style="background: #f9f9f9; padding: 15px; border-radius: 6px; border: 1px solid #eee; max-height: 250px; overflow-y: auto; margin: 15px 0; font-size: 13px;">' + str(res.get("body_html")) + '</div>'
+            '<form action="/approve" method="post" style="display:inline;">'
+            '<input type="hidden" name="draft_id" value="' + str(draft_id) + '">'
+            '<button type="submit" style="background: #e67e22; color: white; padding: 10px 18px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold;">✅ Approva e Pubblica Abbinamento su Shopify</button>'
+            '</form></div>'
+        )
+
+        return (
+            "<html>"
+            "<head><title>Revisione Merchandising Cross-Selling - Caffè Sansone</title></head>"
+            "<body style=\"font-family: Arial; background: #f4f6f8; padding: 30px;\">"
+            "<div style=\"max-width: 900px; margin: auto;\">"
+            "<h2>🎁 Revisione Consigli Merchandising</h2>"
+            "<p>Verifica l'anteprima del box di cross-selling generato dall'IA prima di aggiornare il prodotto.</p>"
             "<div style=\"margin: 20px 0;\"><a href=\"/\" style=\"text-decoration: none; color: #2c3e50; font-weight: bold;\">← Torna alla Dashboard</a></div>"
             + card_html +
             "</div>"
@@ -723,7 +859,14 @@ def approve_draft(draft_id: str = Form(...)):
             success = agent.update_product_description_and_howto(p_id, update_data, tag_to_add="HowTo Ottimizzato")
             if not success:
                 raise Exception("Errore durante il salvataggio su Shopify.")
-            msg = "Blocco HowTo dettagliato aggiunto in coda alla descrizione e JSON Schema aggiornato con successo! (La SEO precedente e i testi originali sono intatti)."
+            msg = "Blocco HowTo dettagliato aggiunto in coda alla descrizione e JSON Schema aggiornato con successo!"
+        elif item_type == "merchandising":
+            p_id = item.get("product_id")
+            body_html = item.get("body_html")
+            success = agent.update_product_plain(p_id, body_html, tag_to_add="Merchandising Consigliato")
+            if not success:
+                raise Exception("Errore durante il salvataggio dei consigli di merchandising su Shopify.")
+            msg = "Box di cross-selling con i prodotti di merchandising aggiunto con successo alla descrizione del caffè!"
         elif item_type == "blog":
             blog_data = item.get("data")
             pub_res = agent.publish_blog_post(blog_data)

@@ -179,7 +179,7 @@ REGOLA ASSOLUTA SULLA SEO E SUL TESTO ESISTENTE:
 </details>
 
 REGOLE TASSATIVE PER L'OUTPUT JSON:
-Restituisci ESCLUSIVAMENTE un oggetto JSON valido con:
+Restituisci ESCLUSIVAMENTE un oggetto JSON con:
 1. "body_html" (stringa HTML: descrizione originale + blocco <details> compilato).
 2. "howto_schema" (oggetto JSON strutturato come Schema.org HowTo dinamico).
 """
@@ -273,7 +273,8 @@ Restituisci ESCLUSIVAMENTE un oggetto JSON con:
         graphql_url = self.shop_url + "/admin/api/2024-07/graphql.json"
         owner_gid = "gid://shopify/Product/" + str(product_id)
         
-        product_gids = ["gid://shopify/Product/" + str(m_id) for m_id in merch_ids]
+        # Formattazione corretta dei GID dei prodotti complementari come array JSON stringificato
+        product_gids = ["gid://shopify/Product/" + str(m_id).split("/")[-1] for m_id in merch_ids]
         
         metafields_to_set = [
             {
@@ -307,12 +308,14 @@ Restituisci ESCLUSIVAMENTE un oggetto JSON con:
         
         if response.status_code == 200:
             result_json = response.json()
+            print("Risposta Shopify MetafieldsSet:", json.dumps(result_json))
             user_errors = result_json.get("data", {}).get("metafieldsSet", {}).get("userErrors", [])
             if user_errors:
                 print("Errori metafieldsSet:", user_errors)
-                return False
+                raise Exception(f"Errore Shopify Metafield: {user_errors[0].get('message')} (Campo: {user_errors[0].get('field')})")
             return True
-        return False
+        else:
+            raise Exception(f"Errore HTTP Shopify: {response.status_code} - {response.text}")
 
     def get_creative_blog_ideas(self):
         focus_topics = [

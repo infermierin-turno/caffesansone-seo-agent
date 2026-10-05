@@ -57,7 +57,7 @@ class ShopifyCoffeeAgent:
         graphql_url = self.shop_url + "/admin/api/2024-07/graphql.json"
         query = """
         {
-          products(first: 50) {
+          products(first: 50, sortKey: UPDATED_AT, reverse: true) {
             edges {
               node {
                 id
@@ -192,7 +192,6 @@ Devi restituire ESCLUSIVAMENTE un oggetto JSON valido con queste chiavi:
             return None
 
     def get_creative_blog_ideas(self):
-        # Lista estesa di categorie e angolazioni per garantire rotazione e novità continue
         focus_topics = [
             "la chimica dell'acqua e dei minerali nell'estrazione del caffè",
             "le differenze sensoriali tra i processi di lavorazione (naturali, lavati, honey)",
@@ -203,7 +202,6 @@ Devi restituire ESCLUSIVAMENTE un oggetto JSON valido con queste chiavi:
             "degustazione bendata e ruota degli aromi: riconoscere note floreali e fruttate",
             "la fisica della pressione e della pre-infusione nell'estrazione moderna"
         ]
-        # Piglia casualmente 2 o 3 macro-temi per forzare l'IA a variare ogni volta
         chosen_focus = random.sample(focus_topics, min(3, len(focus_topics)))
 
         system_prompt = """Sei il consulente di marketing e content strategy per Caffè Sansone, micro-torrefazione artigianale di Napoli.
@@ -222,7 +220,7 @@ RESTUISCI ESCLUSIVAMENTE UN OGGETTO JSON con una chiave "ideas" che contiene un 
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": "Genera 4 spunti unici, freschi e non ripetitivi per il blog."}
                 ],
-                temperature=0.7,  # Temperatura leggermente alzata per stimolare la varietà creativa
+                temperature=0.7,
                 response_format={"type": "json_object"}
             )
             content = response.choices[0].message.content
@@ -518,7 +516,7 @@ def read_root():
         "<h2>☕ Caffè Sansone - Dashboard Control Center</h2>"
         "<p>Gestione rigorosa e professionale: zero allucinazioni, rispetto totale della storia del brand e della SEO esistente.</p>"
         "<div class=\"card\">"
-        "<h3>1. Integrazione HowTo Prodotti (Primi 3 in coda)</h3>"
+        "<h3>1. Integrazione HowTo Prodotti (Prossimi 3 in coda)</h3>"
         "<p style=\"font-size: 13px; color: #666; margin-bottom: 15px;\">Aggiunge il box a scomparsa con istruzioni dettagliate in fondo alla descrizione esistente e aggiorna il JSON Schema HowTo.</p>"
         "<form action=\"/prepare-products\" method=\"get\">"
         "<button type=\"submit\" class=\"btn-primary\">🔍 Aggiungi HowTo ai Primi 3 Prodotti (Revisione)</button>"
@@ -543,14 +541,22 @@ def read_root():
 def prepare_products():
     try:
         products = agent.get_products(limit=50)
-        pending_products = [p for p in products if "HowTo Ottimizzato" not in p.get("tags", [])]
+        
+        # Filtro avanzato: esclude sia chi ha il tag sia chi ha già il blocco HTML nel body
+        pending_products = []
+        for p in products:
+            tags = p.get("tags", [])
+            body = p.get("body_html", "") or ""
+            if "HowTo Ottimizzato" not in tags and "Guida alla preparazione e estrazione ottimale" not in body:
+                pending_products.append(p)
+                
         target_products = pending_products[:3]
         
         if not target_products:
             return (
                 "<html><body style=\"font-family: Arial; padding: 40px; text-align: center;\">"
                 "<h3>Nessun prodotto trovato da aggiornare!</h3>"
-                "<p>Tutti i prodotti hanno già il tag 'HowTo Ottimizzato'.</p>"
+                "<p>Tutti i prodotti hanno già il tag 'HowTo Ottimizzato' o la guida inserita.</p>"
                 "<a href=\"/\" style=\"color: #2c3e50; font-weight: bold;\">← Torna alla Dashboard</a>"
                 "</body></html>"
             )
@@ -648,7 +654,7 @@ def prepare_blog(topic: str = Form(...)):
 def approve_draft(draft_id: str = Form(...)):
     if draft_id not in PENDING_APPROVALS:
         return (
-            "<html><body style=\"font-family: Arial; padding: 400px; text-align: center;\">"
+            "<html><body style=\"font-family: Arial; padding: 40px; text-align: center;\">"
             "<h3>Bozza non trovata o già approvata/scaduta.</h3>"
             "<a href=\"/\" style=\"color: #2c3e50; font-weight: bold;\">← Torna alla Dashboard</a>"
             "</body></html>"
@@ -667,22 +673,19 @@ def approve_draft(draft_id: str = Form(...)):
             msg = "Blocco HowTo dettagliato aggiunto in coda alla descrizione e JSON Schema aggiornato con successo! (La SEO precedente e i testi originali sono intatti)."
         elif item_type == "blog":
             blog_data = item.get("data")
-            article = agent.publish_blog_post(blog_data)
-            msg = "Articolo professionale '" + str(article.get('title')) + "' pubblicato con successo sul blog di Shopify!"
+            pub_res = agent.publish_blog_post(blog_data)
+            msg = "Articolo \"" + str(pub_res.get('title', '')) + "\" pubblicato con successo sul blog di Shopify!"
         else:
-            raise Exception("Tipo di elemento non valido.")
+            raise Exception("Tipo di elemento non riconosciuto.")
 
         return (
-            "<html>"
-            "<head><title>Operazione Completata</title></head>"
-            "<body style=\"font-family: Arial; background: #f4f6f8; padding: 50px; text-align: center;\">"
-            "<div style=\"max-width: 600px; margin: auto; background: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05);\">"
-            "<h2 style=\"color: #10b981;\">✨ Operazione Riuscita!</h2>"
-            "<p style=\"font-size: 16px; color: #333; margin: 20px 0;\">" + str(msg) + "</p>"
-            "<a href=\"/\" style=\"display: inline-block; margin-top: 20px; background: #2c3e50; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: bold;\">Torna alla Dashboard</a>"
+            "<html><body style=\"font-family: Arial; padding: 40px; text-align: center; background: #f4f6f8;\">"
+            "<div style=\"max-width: 600px; margin: auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05);\">"
+            "<h2 style=\"color: #10b981;\">Operazione completata con successo!</h2>"
+            "<p style=\"color: #333; font-size: 15px;\">" + msg + "</p>"
+            "<div style=\"margin-top: 25px;\"><a href=\"/\" style=\"background: #2c3e50; color: white; padding: 10px 20px; border-radius: 6px; text-decoration: none; font-weight: bold;\">← Torna alla Dashboard</a></div>"
             "</div>"
-            "</body>"
-            "</html>"
+            "</body></html>"
         )
     except Exception as e:
         return JSONResponse(status_code=500, content={"detail": str(e)})

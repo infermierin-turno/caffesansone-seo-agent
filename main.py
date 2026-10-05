@@ -53,6 +53,65 @@ class ShopifyCoffeeAgent:
             "X-Shopify-Access-Token": self.access_token
         }
 
+    def get_product_by_id(self, product_id):
+        graphql_url = self.shop_url + "/admin/api/2024-07/graphql.json"
+        # Pulisce l'ID nel caso l'utente abbia inserito il formato gid o solo il numero
+        numeric_id = str(product_id).split("/")[-1]
+        gid = "gid://shopify/Product/" + numeric_id
+        
+        query = """
+        query getProduct($id: ID!) {
+          product(id: $id) {
+            id
+            title
+            handle
+            descriptionHtml
+            tags
+            variants(first: 20) {
+              edges {
+                node {
+                  id
+                  title
+                  price
+                  sku
+                  selectedOptions {
+                    name
+                    value
+                  }
+                }
+              }
+            }
+          }
+        }
+        """
+        response = requests.post(graphql_url, json={"query": query, "variables": {"id": gid}}, headers=self.headers)
+        if response.status_code == 200:
+            data = response.json()
+            node = data.get("data", {}).get("product")
+            if not node:
+                return None
+            
+            variants_list = []
+            for v_edge in node.get("variants", {}).get("edges", []):
+                v_node = v_edge.get("node", {})
+                variants_list.append({
+                    "id": v_node.get("id"),
+                    "title": v_node.get("title"),
+                    "price": v_node.get("price"),
+                    "sku": v_node.get("sku"),
+                    "options": v_node.get("selectedOptions", [])
+                })
+
+            return {
+                "id": numeric_id,
+                "title": node.get("title"),
+                "body_html": node.get("descriptionHtml"),
+                "tags": node.get("tags", []),
+                "variants": variants_list
+            }
+        else:
+            raise Exception("Errore di comunicazione con l'API GraphQL di Shopify: " + response.text)
+
     def get_products(self, limit=50):
         graphql_url = self.shop_url + "/admin/api/2024-07/graphql.json"
         query = """
@@ -191,7 +250,6 @@ Devi restituire ESCLUSIVAMENTE un oggetto JSON valido con queste chiavi:
             if not data.get("body_html"):
                 data["body_html"] = current_body
                 
-            # Assicura che lo schema HowTo usi sempre il titolo reale del prodotto
             if "howto_schema" in data and isinstance(data["howto_schema"], dict):
                 data["howto_schema"]["name"] = "Preparazione del Caffè " + str(title)
                 data["howto_schema"]["description"] = "Guida dettagliata per preparare un caffè perfetto utilizzando " + str(title) + "."
@@ -525,13 +583,17 @@ def read_root():
         "<div class=\"container\">"
         "<h2>☕ Caffè Sansone - Dashboard Control Center</h2>"
         "<p>Gestione rigorosa e professionale: zero allucinazioni, rispetto totale della storia del brand e della SEO esistente.</p>"
+        
         "<div class=\"card\">"
-        "<h3>1. Integrazione HowTo Prodotti (Prossimi 3 in coda)</h3>"
-        "<p style=\"font-size: 13px; color: #666; margin-bottom: 15px;\">Aggiunge il box a scomparsa con istruzioni dettagliate in fondo alla descrizione esistente e aggiorna il JSON Schema HowTo.</p>"
-        "<form action=\"/prepare-products\" method=\"get\">"
-        "<button type=\"submit\" class=\"btn-primary\">🔍 Aggiungi HowTo ai Primi 3 Prodotti (Revisione)</button>"
+        "<h3>1. Ricerca e Inserimento HowTo per ID Prodotto</h3>"
+        "<p style=\"font-size: 13px; color: #666; margin-bottom: 15px;\">Inserisci l'ID numerico del prodotto di Shopify (es. <code>7891234567890</code>) per generare e revisionare il blocco HowTo mirato.</p>"
+        "<form action=\"/prepare-product-by-id\" method=\"get\">"
+        "<label>ID Prodotto Shopify:</label>"
+        "<input type=\"text\" name=\"product_id\" placeholder=\"Inserisci l'ID del prodotto...\" required />"
+        "<button type=\"submit\" class=\"btn-primary\">🔍 Cerca e Genera HowTo (Revisione)</button>"
         "</form>"
         "</div>"
+
         "<div class=\"card\">"
         "<h3>2. Generatore Articoli Blog & Spunti Strategici</h3>"
         "<p style=\"font-size: 13px; color: #666; margin-bottom: 15px;\">Spunti professionali variati e dinamici creati dall'IA per il tuo blog. Ricarica la pagina per vederne di nuovi:</p>"
@@ -547,69 +609,50 @@ def read_root():
         "</html>"
     )
 
-@app.get("/prepare-products", response_class=HTMLResponse)
-def prepare_products():
+@app.get("/prepare-product-by-id", response_class=HTMLResponse)
+def prepare_product_by_id(product_id: str):
     try:
-        products = agent.get_products(limit=50)
-        
-        # Filtro avanzato: esclude sia chi ha il tag sia chi ha già il blocco HTML nel body
-        pending_products = []
-        for p in products:
-            tags = p.get("tags", [])
-            body = p.get("body_html", "") or ""
-            if "HowTo Ottimizzato" not in tags and "Guida alla preparazione e estrazione ottimale" not in body:
-                pending_products.append(p)
-                
-        target_products = pending_products[:3]
-        
-        if not target_products:
+        prod = agent.get_product_by_id(product_id)
+        if not prod:
             return (
                 "<html><body style=\"font-family: Arial; padding: 40px; text-align: center;\">"
-                "<h3>Nessun prodotto trovato da aggiornare!</h3>"
-                "<p>Tutti i prodotti hanno già il tag 'HowTo Ottimizzato' o la guida inserita.</p>"
-                "<a href=\"/\" style=\"color: #2c3e50; font-weight: bold;\">← Torna alla Dashboard</a>"
+                "<h3>Prodotto non trovato!</h3>"
+                "<p>Verifica l'ID inserito nel pannello admin di Shopify.</p>"
+                "<a href=\"/\">← Torna alla Dashboard</a>"
                 "</body></html>"
             )
             
-        previews = []
-        for prod in target_products:
-            p_id = prod.get("id")
-            update_data = agent.append_howto_to_product(prod)
-            if update_data:
-                draft_id = "prod_" + str(p_id)
-                PENDING_APPROVALS[draft_id] = {
-                    "type": "product",
-                    "product_id": p_id,
-                    "data": update_data
-                }
-                previews.append({
-                    "draft_id": draft_id,
-                    "title": prod.get("title"),
-                    "body_html": update_data.get("body_html")
-                })
+        update_data = agent.append_howto_to_product(prod)
+        if not update_data:
+            raise Exception("Impossibile generare i dati HowTo per questo prodotto.")
+            
+        draft_id = "prod_" + str(prod.get("id"))
+        PENDING_APPROVALS[draft_id] = {
+            "type": "product",
+            "product_id": prod.get("id"),
+            "data": update_data
+        }
         
-        cards_html = ""
-        for p in previews:
-            cards_html += (
-                '<div style="background: #fff; border: 1px solid #e1e4e8; border-radius: 8px; padding: 20px; margin-bottom: 25px; box-shadow: 0 2px 5px rgba(0,0,0,0.02);">'
-                '<h3 style="color: #2c3e50; margin-top: 0;">' + str(p["title"]) + '</h3>'
-                '<p style="font-size: 13px; color: #10b981; font-weight: bold;">ℹ️ La SEO attuale e i testi originali sono intatti. Verrà inserito il box HowTo dettagliato in fondo.</p>'
-                '<div style="background: #f9f9f9; padding: 15px; border-radius: 6px; border: 1px solid #eee; max-height: 250px; overflow-y: auto; margin: 15px 0; font-size: 13px;">' + str(p["body_html"]) + '</div>'
-                '<form action="/approve" method="post" style="display:inline;">'
-                '<input type="hidden" name="draft_id" value="' + str(p["draft_id"]) + '">'
-                '<button type="submit" style="background: #10b981; color: white; padding: 10px 18px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold;">✅ Approva e Aggiorna su Shopify</button>'
-                '</form></div>'
-            )
+        card_html = (
+            '<div style="background: #fff; border: 1px solid #e1e4e8; border-radius: 8px; padding: 20px; margin-bottom: 25px; box-shadow: 0 2px 5px rgba(0,0,0,0.02);">'
+            '<h3 style="color: #2c3e50; margin-top: 0;">' + str(prod.get("title")) + ' (ID: ' + str(prod.get("id")) + ')</h3>'
+            '<p style="font-size: 13px; color: #10b981; font-weight: bold;">ℹ️ La SEO attuale e i testi originali sono intatti. Verrà inserito il box HowTo dettagliato in fondo.</p>'
+            '<div style="background: #f9f9f9; padding: 15px; border-radius: 6px; border: 1px solid #eee; max-height: 250px; overflow-y: auto; margin: 15px 0; font-size: 13px;">' + str(update_data.get("body_html")) + '</div>'
+            '<form action="/approve" method="post" style="display:inline;">'
+            '<input type="hidden" name="draft_id" value="' + str(draft_id) + '">'
+            '<button type=\"submit\" style="background: #10b981; color: white; padding: 10px 18px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold;">✅ Approva e Aggiorna su Shopify</button>'
+            '</form></div>'
+        )
 
         return (
             "<html>"
-            "<head><title>Revisione HowTo Prodotti - Caffè Sansone</title></head>"
+            "<head><title>Revisione HowTo Prodotto - Caffè Sansone</title></head>"
             "<body style=\"font-family: Arial; background: #f4f6f8; padding: 30px;\">"
             "<div style=\"max-width: 900px; margin: auto;\">"
-            "<h2>📋 Revisione Inserimento HowTo (" + str(len(previews)) + " prodotti)</h2>"
+            "<h2>📋 Revisione Inserimento HowTo</h2>"
             "<p>Controlla che il box a scomparsa contenga tutti i passi dettagliati corretti prima dell'invio a Shopify.</p>"
             "<div style=\"margin: 20px 0;\"><a href=\"/\" style=\"text-decoration: none; color: #2c3e50; font-weight: bold;\">← Torna alla Dashboard</a></div>"
-            + cards_html +
+            + card_html +
             "</div>"
             "</body>"
             "</html>"

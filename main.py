@@ -10,7 +10,6 @@ from openai import OpenAI
 
 app = FastAPI()
 
-# Memoria temporanea in-memory per le bozze in attesa di approvazione
 PENDING_APPROVALS = {}
 
 class ShopifyCoffeeAgent:
@@ -155,63 +154,39 @@ class ShopifyCoffeeAgent:
 
     def scrape_url_content(self, url: str):
         try:
-            req = Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+            req = Request(url, headers={"User-Agent": "Mozilla/5.0"})
             with urlopen(req, timeout=10) as response:
                 html = response.read().decode('utf-8', errors='ignore')
-            
             clean_html = re.sub(r'<script.*?>.*?</script>', '', html, flags=re.DOTALL)
             clean_html = re.sub(r'<style.*?>.*?</style>', '', clean_html, flags=re.DOTALL)
             text = re.sub(r'<[^>]+>', ' ', clean_html)
-            text = ' '.join(text.split())
-            return text[:8000]
+            return ' '.join(text.split())[:8000]
         except Exception as e:
             return f"Errore durante la lettura del link: {str(e)}"
 
     def parse_new_product_from_source(self, source_text: str, user_directive: str = ""):
         system_prompt = f"""Sei il maestro torrefattore ed esperto di marketing per Caffè Sansone di Napoli.
-Il tuo compito è analizzare i dati grezzi estratti da una pagina di fornitura di caffè specialty e creare una scheda prodotto professionale, elegante e ottimizzata per la vendita online su Shopify.
-
-DIRETTIVA AGGIUNTIVA FORNITA DAL DIRETTORE:
-{user_directive if user_directive else "Nessuna direttiva specifica."}
-
-REGOLE TASSATIVE PER L'OUTPUT JSON:
-Restituisci ESCLUSIVAMENTE un oggetto JSON con:
-1. "title" (stringa: nome commerciale accattivante)
-2. "body_html" (stringa HTML: descrizione dettagliata con tag <p>, <h2>, <ul>, <li>, <strong>, terminando con il blocco <details> standard per la guida alla preparazione)
-3. "tags" (stringa di tag separati da virgola)
-4. "vendor": "Caffè Sansone"
-5. "product_type": "Caffè in Grani"
-6. "price": Prezzo consigliato (stringa, es. "16.50")
-7. "howto_schema": Oggetto JSON Schema.org HowTo dinamico.
-"""
+Analizza i dati grezzi e crea una scheda prodotto ottimizzata per Shopify.
+DIRETTIVA: {user_directive or "Nessuna"}
+Restituisci ESCLUSIVAMENTE un JSON con: title, body_html, tags, vendor ("Caffè Sansone"), product_type ("Caffè in Grani"), price, howto_schema."""
         try:
             response = self.ai_client.chat.completions.create(
                 model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"Dati grezzi della scheda fornitore:\n{source_text}"}
-                ],
+                messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": source_text}],
                 temperature=0.3,
                 response_format={"type": "json_object"}
             )
             return json.loads(response.choices[0].message.content.strip())
         except Exception as e:
-            raise Exception(f"Errore IA generazione nuovo prodotto: {str(e)}")
+            raise Exception(f"Errore IA: {str(e)}")
 
     def create_shopify_product(self, product_data: dict):
         graphql_url = self.shop_url + "/admin/api/2024-07/graphql.json"
         mutation = """
         mutation productCreate($input: ProductInput!) {
           productCreate(input: $input) {
-            product {
-              id
-              title
-              handle
-            }
-            userErrors {
-              field
-              message
-            }
+            product { id title handle }
+            userErrors { field message }
           }
         }
         """
@@ -225,264 +200,81 @@ Restituisci ESCLUSIVAMENTE un oggetto JSON con:
             "vendor": product_data.get("vendor", "Caffè Sansone"),
             "productType": product_data.get("product_type", "Caffè in Grani"),
             "tags": tags_list,
-            "variants": [
-                {
-                    "price": product_data.get("price", "15.00"),
-                    "sku": f"SANSONE-{random.randint(1000,9999)}"
-                }
-            ]
+            "variants": [{"price": product_data.get("price", "15.00"), "sku": f"SANSONE-{random.randint(1000,9999)}"}]
         }
-
         response = requests.post(graphql_url, json={"query": mutation, "variables": {"input": input_data}}, headers=self.headers)
         if response.status_code == 200:
             res_json = response.json()
             user_errors = res_json.get("data", {}).get("productCreate", {}).get("userErrors", [])
             if user_errors:
-                raise Exception(f"Errore Shopify creazione prodotto: {user_errors[0].get('message')}")
-            
-            prod_node = res_json.get("data", {}).get("productCreate", {}).get("product", {})
-            prod_id = prod_node.get("id", "").split("/")[-1]
-
-            howto_obj = product_data.get("howto_schema")
-            if howto_obj and prod_id:
-                metafield_mutation = """
-                mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
-                  metafieldsSet(metafields: $metafields) {
-                    metafields { id }
-                    userErrors { field message }
-                  }
-                }
-                """
-                meta_vars = {
-                    "metafields": [{
-                        "ownerId": f"gid://shopify/Product/{prod_id}",
-                        "namespace": "custom",
-                        "key": "how_to_schema",
-                        "type": "json",
-                        "value": json.dumps(howto_obj, ensure_ascii=False)
-                    }]
-                }
-                requests.post(graphql_url, json={"query": metafield_mutation, "variables": meta_vars}, headers=self.headers)
-
-            return prod_node
-        else:
-            raise Exception(f"Errore HTTP Shopify: {response.status_code} - {response.text}")
+                raise Exception(f"Errore Shopify: {user_errors[0].get('message')}")
+            return res_json.get("data", {}).get("productCreate", {}).get("product", {})
+        raise Exception(f"Errore HTTP Shopify: {response.text}")
 
     def append_howto_to_product(self, product_data, user_directive=""):
         title = product_data.get("title")
         current_body = product_data.get("body_html", "") or ""
-        var_list = product_data.get("variants", [])
-
-        system_prompt = f"""Sei un maestro torrefattore ed esperto di caffè specialty per Caffè Sansone.
-Il tuo compito è analizzare il nome e la descrizione attuale del prodotto e aggiungere in coda un blocco HTML nativo a scomparsa (fisarmonica) con istruzioni di preparazione REALI, dettagliate e specifiche per questo caffè.
-
-DIRETTIVA AGGIUNTIVA FORNITA DAL DIRETTORE:
-{user_directive if user_directive else "Nessuna direttiva specifica, procedi con standard artigianali eccellenti."}
-
-REGOLE TASSATIVE PER L'OUTPUT JSON:
-Restituisci ESCLUSIVAMENTE un oggetto JSON con:
-1. "body_html" (stringa HTML: descrizione originale + blocco <details> compilato).
-2. "howto_schema" (oggetto JSON strutturato come Schema.org HowTo dinamico).
-"""
-
-        user_prompt = "Nome prodotto: " + str(title) + "\n\nDescrizione attuale:\n" + str(current_body) + "\n\nVarianti:\n" + json.dumps(var_list, ensure_ascii=False)
-
+        system_prompt = f"Aggiungi un blocco HTML a scomparsa (details) con istruzioni di preparazione per {title}. DIRETTIVA: {user_directive or 'Nessuna'}. Restituisci JSON con 'body_html' e 'howto_schema'."
         try:
             response = self.ai_client.chat.completions.create(
                 model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
+                messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": current_body}],
                 temperature=0.2,
                 response_format={"type": "json_object"}
             )
             data = json.loads(response.choices[0].message.content.strip())
             if not data.get("body_html"):
                 data["body_html"] = current_body
-            if "howto_schema" in data and isinstance(data["howto_schema"], dict):
-                data["howto_schema"]["name"] = "Preparazione del Caffè " + str(title)
-                data["howto_schema"]["description"] = "Guida dettagliata per preparare un caffè perfetto utilizzando " + str(title) + "."
             return data
-        except Exception as e:
-            print("Errore HowTo: " + str(e))
-            return None
+        except Exception:
+            return {"body_html": current_body}
 
-    def update_product_image_alt_texts(self, product_id, product_title):
+    def update_product_description_and_howto(self, product_id, update_data):
         graphql_url = self.shop_url + "/admin/api/2024-07/graphql.json"
-        query_images = "{\n  product(id: \"gid://shopify/Product/" + str(product_id) + "\") {\n    images(first: 10) {\n      edges {\n        node {\n          id\n          url\n        }\n      }\n    }\n  }\n}"
-        resp = requests.post(graphql_url, json={"query": query_images}, headers=self.headers)
-        if resp.status_code != 200:
-            return False
-        edges = resp.json().get("data", {}).get("product", {}).get("images", {}).get("edges", [])
-        if not edges:
-            return True
-
-        mutation_alt = """
-        mutation productUpdateMedia($media: [CreateMediaInput!]!,$productId: ID!) {
-          productUpdateMedia(media: $media, productId:$productId) {
-            media {
-              id
-              alt
-            }
-            userErrors {
-              field
-              message
-            }
-          }
-        }
-        """
-        media_inputs = []
-        for i, edge in enumerate(edges):
-            img_id = edge.get("node", {}).get("id")
-            alt_text = str(product_title) + " - Caffè Specialty Sansone Vista " + str(i + 1)
-            media_inputs.append({
-                "id": img_id,
-                "alt": alt_text,
-                "mediaContentType": "IMAGE"
-            })
-        variables = {
-            "productId": "gid://shopify/Product/" + str(product_id),
-            "media": media_inputs
-        }
-        requests.post(graphql_url, json={"query": mutation_alt, "variables": variables}, headers=self.headers)
-        return True
-
-    def update_product_description_and_howto(self, product_id, update_data, tag_to_add="HowTo Ottimizzato"):
-        graphql_url = self.shop_url + "/admin/api/2024-07/graphql.json"
-        get_query = "{\n  product(id: \"gid://shopify/Product/" + str(product_id) + "\") {\n    title\n    tags\n  }\n}"
-        resp = requests.post(graphql_url, json={"query": get_query}, headers=self.headers)
-        tags_list = []
-        product_title = "Caffè Specialty"
-        if resp.status_code == 200:
-            node = resp.json().get("data", {}).get("product", {})
-            if node:
-                product_title = node.get("title", product_title)
-                if node.get("tags"):
-                    tags_list = node.get("tags")
-        
-        if tag_to_add not in tags_list:
-            tags_list.append(tag_to_add)
-
         mutation = """
         mutation productUpdate($input: ProductInput!) {
           productUpdate(input: $input) {
-            product {
-              id
-              title
-            }
-            userErrors {
-              field
-              message
-            }
+            product { id title }
+            userErrors { field message }
           }
         }
         """
         variables = {
             "input": {
                 "id": "gid://shopify/Product/" + str(product_id),
-                "descriptionHtml": update_data.get("body_html"),
-                "tags": tags_list
+                "descriptionHtml": update_data.get("body_html")
             }
         }
         response = requests.post(graphql_url, json={"query": mutation, "variables": variables}, headers=self.headers)
-        if response.status_code == 200:
-            result_data = response.json()
-            user_errors = result_data.get("data", {}).get("productUpdate", {}).get("userErrors", [])
-            if user_errors:
-                return False
-            
-            metafields_to_set = []
-            howto_obj = update_data.get("howto_schema")
-            if howto_obj:
-                metafields_to_set.append({
-                    "ownerId": "gid://shopify/Product/" + str(product_id),
-                    "namespace": "custom",
-                    "key": "how_to_schema",
-                    "type": "json",
-                    "value": json.dumps(howto_obj, ensure_ascii=False)
-                })
-
-            if metafields_to_set:
-                metafield_mutation = """
-                mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
-                  metafieldsSet(metafields: $metafields) {
-                    metafields {
-                      id
-                      namespace
-                      key
-                      value
-                    }
-                    userErrors {
-                      field
-                      message
-                      code
-                    }
-                  }
-                }
-                """
-                metafield_variables = {"metafields": metafields_to_set}
-                meta_resp = requests.post(graphql_url, json={"query": metafield_mutation, "variables": metafield_variables}, headers=self.headers)
-                meta_json = meta_resp.json()
-                if "errors" in meta_json:
-                    return False
-                meta_errors = meta_json.get("data", {}).get("metafieldsSet", {}).get("userErrors", [])
-                if meta_errors:
-                    return False
-
-            self.update_product_image_alt_texts(product_id, product_title)
-            return True
-        else:
-            return False
+        return response.status_code == 200
 
     def suggest_merchandising_for_product(self, product_id, user_directive=""):
         target_prod = self.get_product_by_id(product_id)
         if not target_prod:
-            raise Exception("Prodotto caffè non trovato.")
-            
+            raise Exception("Prodotto non trovato.")
         all_prods = self.get_all_products(limit=50)
-        merch_candidates = [{"id": p["id"], "title": p["title"], "handle": p["handle"], "type": p["product_type"]} for p in all_prods if str(p["id"]) != str(target_prod["id"])]
-
-        system_prompt = f"""Sei il direttore commerciale di Caffè Sansone. 
-Seleziona dal catalogo Shopify disponibile i 2 o 3 prodotti di merchandising o accessori che meglio si abbinano a questo specifico caffè.
-
-DIRETTIVA AGGIUNTIVA FORNITA DAL DIRETTORE:
-{user_directive if user_directive else "Nessuna direttiva specifica."}
-
-REGOLE TASSATIVE PER L'OUTPUT JSON:
-1. "selected_ids" (array di stringhe con gli ID numerici dei prodotti scelti)
-2. "merchandising_summary" (stringa con un breve commento strategico).
-"""
-        user_prompt = "Caffè di riferimento:\n" + json.dumps(target_prod, ensure_ascii=False) + "\n\nCatalogo Merchandising:\n" + json.dumps(merch_candidates, ensure_ascii=False)
-
-        try:
-            response = self.ai_client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                temperature=0.3,
-                response_format={"type": "json_object"}
-            )
-            data = json.loads(response.choices[0].message.content.strip())
-            selected_ids = data.get("selected_ids", [])
-            chosen_details = [p for p in merch_candidates if str(p["id"]) in [str(x) for x in selected_ids]]
-            return {
-                "product_id": target_prod["id"],
-                "title": target_prod["title"],
-                "selected_ids": [str(x) for x in selected_ids],
-                "chosen_details": chosen_details,
-                "summary": data.get("merchandising_summary", "")
-            }
-        except Exception as e:
-            raise Exception("Errore merchandising: " + str(e))
+        merch_candidates = [{"id": p["id"], "title": p["title"]} for p in all_prods if str(p["id"]) != str(target_prod["id"])]
+        
+        system_prompt = f"Seleziona 2 o 3 prodotti complementari dal catalogo per {target_prod['title']}. DIRETTIVA: {user_directive or 'Nessuna'}. Restituisci JSON con 'selected_ids' (array di ID) e 'merchandising_summary'."
+        response = self.ai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": json.dumps(merch_candidates)}],
+            temperature=0.3,
+            response_format={"type": "json_object"}
+        )
+        data = json.loads(response.choices[0].message.content.strip())
+        return {
+            "product_id": target_prod["id"],
+            "title": target_prod["title"],
+            "selected_ids": [str(x) for x in data.get("selected_ids", [])],
+            "chosen_details": [p for p in merch_candidates if str(p["id"]) in [str(x) for x in data.get("selected_ids", [])]],
+            "summary": data.get("merchandising_summary", "")
+        }
 
     def update_product_merchandising_metafields(self, product_id, merch_ids):
         graphql_url = self.shop_url + "/admin/api/2024-07/graphql.json"
         owner_gid = "gid://shopify/Product/" + str(product_id)
         product_gids = ["gid://shopify/Product/" + str(m_id).split("/")[-1] for m_id in merch_ids]
-        
         metafields_to_set = [{
             "ownerId": owner_gid,
             "namespace": "custom",
@@ -490,50 +282,31 @@ REGOLE TASSATIVE PER L'OUTPUT JSON:
             "type": "list.product_reference",
             "value": json.dumps(product_gids)
         }]
-
         mutation = """
         mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
           metafieldsSet(metafields: $metafields) {
-            metafields { id namespace key value }
-            userErrors { field message code }
+            metafields { id }
+            userErrors { field message }
           }
         }
         """
         response = requests.post(graphql_url, json={"query": mutation, "variables": {"metafields": metafields_to_set}}, headers=self.headers)
-        if response.status_code == 200:
-            res_json = response.json()
-            user_errors = res_json.get("data", {}).get("metafieldsSet", {}).get("userErrors", [])
-            if user_errors:
-                raise Exception(f"Errore Shopify Metafield: {user_errors[0].get('message')}")
-            return True
-        return False
+        return response.status_code == 200
 
     def get_creative_blog_ideas(self):
-        focus_topics = [
-            "la chimica dell'acqua e dei minerali nell'estrazione del caffè",
-            "le differenze sensoriali tra i processi di lavorazione (naturali, lavati, honey)",
-            "il profilo di tostatura medio-chiaro per metodi filtro vs espresso napoletano",
-            "storia e evoluzione della cultura del caffè a Napoli tra tradizione e innovazione"
-        ]
-        chosen_focus = random.sample(focus_topics, min(2, len(focus_topics)))
-        system_prompt = f"Sei il consulente di marketing per Caffè Sansone di Napoli. Genera 4 spunti originali per un articolo di blog focalizzati su: {', '.join(chosen_focus)}.\nRESTUISCI UN JSON con chiave \"ideas\" contenente oggetti con \"title\" e \"angle\"."
         try:
             response = self.ai_client.chat.completions.create(
                 model="gpt-4o-mini",
-                messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": "Genera 4 spunti."}],
+                messages=[{"role": "system", "content": "Genera 4 spunti originali per il blog di Caffè Sansone. Restituisci JSON con chiave 'ideas' (array di oggetti con 'title' e 'angle')."}],
                 temperature=0.7,
                 response_format={"type": "json_object"}
             )
             return json.loads(response.choices[0].message.content.strip()).get("ideas", [])
         except Exception:
-            return [{"title": "L'importanza dell'acqua nell'estrazione del caffè", "angle": "Focus chimico."}]
+            return [{"title": "L'importanza dell'acqua nell'estrazione", "angle": "Focus chimico."}]
 
     def prepare_blog_post(self, topic: str, user_directive=""):
-        system_prompt = f"""Sei un copywriter ed esperto di caffè specialty per Caffè Sansone. 
-Scrivi un articolo per il blog rigoroso, professionale e basato sulla tradizione artigianale.
-DIRETTIVA: {user_directive or 'Nessuna'}
-RESTUISCI UN JSON con: "title", "summary", "body_html", "tags".
-"""
+        system_prompt = f"Scrivi un articolo blog per Caffè Sansone. DIRETTIVA: {user_directive or 'Nessuna'}. Restituisci JSON con 'title', 'summary', 'body_html', 'tags'."
         response = self.ai_client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": f"Argomento: {topic}"}],
@@ -545,13 +318,11 @@ RESTUISCI UN JSON con: "title", "summary", "body_html", "tags".
     def publish_blog_post(self, blog_data: dict):
         graphql_url = self.shop_url + "/admin/api/2024-07/graphql.json"
         blogs_resp = requests.post(graphql_url, json={"query": "{ blogs(first: 1) { edges { node { id } } } }"}, headers=self.headers)
-        blogs_edges = blogs_resp.json().get("data", {}).get("blogs", {}).get("edges", [])
-        blog_id = blogs_edges[0]["node"]["id"]
-
+        blog_id = blogs_resp.json().get("data", {}).get("blogs", {}).get("edges", [])[0]["node"]["id"]
         mutation = """
         mutation articleCreate($article: ArticleCreateInput!, $blogId: ID!) {
           articleCreate(article: $article, blogId: $blogId) {
-            article { id title handle }
+            article { id title }
             userErrors { field message }
           }
         }
@@ -567,11 +338,7 @@ RESTUISCI UN JSON con: "title", "summary", "body_html", "tags".
             }
         }
         resp = requests.post(graphql_url, json={"query": mutation, "variables": variables}, headers=self.headers)
-        res_json = resp.json()
-        user_errors = res_json.get("data", {}).get("articleCreate", {}).get("userErrors", [])
-        if user_errors:
-            raise Exception(f"Errore Shopify blog: {user_errors[0].get('message')}")
-        return res_json.get("data", {}).get("articleCreate", {}).get("article", {})
+        return resp.json().get("data", {}).get("articleCreate", {}).get("article", {})
         shop_url = os.getenv("SHOP_URL", "https://348aca-2.myshopify.com")
 openai_api_key = os.getenv("OPENAI_API_KEY", "")
 client_id = os.getenv("SHOPIFY_CLIENT_ID", "")
@@ -582,86 +349,72 @@ agent = ShopifyCoffeeAgent(shop_url=shop_url, openai_api_key=openai_api_key, cli
 @app.get("/", response_class=HTMLResponse)
 def read_root():
     ideas = agent.get_creative_blog_ideas()
-    ideas_html = ""
-    for idea in ideas:
-        t = idea.get("title", "")
-        a = idea.get("angle", "")
-        ideas_html += f'<div style="background: white; border: 1px solid #e1e4e8; padding: 12px; border-radius: 6px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;"><div><strong>{t}</strong><br><span style="font-size: 12px; color: #666;">{a}</span></div><form action="/prepare-blog" method="post" style="margin: 0;"><input type="hidden" name="topic" value="{t}"><button type="submit" style="background: #27ae60; color: white; border: none; padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold;">Usa questo spunto</button></form></div>'
+    ideas_html = "".join([f'<div style="background: white; border: 1px solid #e1e4e8; padding: 12px; border-radius: 6px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;"><div><strong>{i.get("title")}</strong><br><span style="font-size: 12px; color: #666;">{i.get("angle")}</span></div><form action="/prepare-blog" method="post" style="margin: 0;"><input type="hidden" name="topic" value="{i.get("title")}"><button type="submit" style="background: #27ae60; color: white; border: none; padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold;">Usa questo spunto</button></form></div>' for i in ideas])
 
     return f"""
     <html>
-    <head>
-    <title>Caffè Sansone - AI Control Center</title>
+    <head><title>Caffè Sansone - AI Control Center</title>
     <style>
     body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f4f6f8; color: #333; margin: 0; padding: 30px; }}
     .container {{ max-width: 900px; margin: auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }}
     h2 {{ color: #2c3e50; margin-top: 0; border-bottom: 2px solid #eaeaea; padding-bottom: 15px; }}
     .card {{ background: #fafbfc; padding: 20px; border-radius: 8px; margin-bottom: 25px; border: 1px solid #e1e4e8; }}
-    .card h3 {{ margin-top: 0; color: #24292e; }}
     label {{ display: block; margin-bottom: 8px; font-weight: 600; font-size: 14px; }}
     input[type='text'], textarea {{ width: 100%; padding: 10px; margin-bottom: 15px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; box-sizing: border-box; }}
-    button {{ padding: 12px 20px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 600; transition: background 0.2s; }}
+    button {{ padding: 12px 20px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 600; }}
     .btn-primary {{ background: #2c3e50; color: white; }}
-    .btn-primary:hover {{ background: #1a252f; }}
     </style>
     </head>
     <body>
     <div class="container">
     <h2>☕ Caffè Sansone - Dashboard Control Center</h2>
-    <p>Gestione rigorosa e professionale: zero allucinazioni, rispetto totale della storia del brand e della SEO esistente.</p>
     
-    <!-- Sezione 0: Crea Prodotto da Link -->
     <div class="card" style="border-left: 4px solid #8e44ad;">
-    <h3>✨ 0. Crea e Ottimizza Nuovo Prodotto da Link (es. Mare Terra)</h3>
+    <h3>✨ 0. Crea e Ottimizza Nuovo Prodotto da Link</h3>
     <form action="/prepare-new-product" method="post">
-    <label>Link della scheda fornitore / prodotto:</label>
-    <input type="text" name="product_link" placeholder="https://mareterracoffee.com/en/green-coffee/..." required />
-    <label>La tua indicazione / direttiva personalizzata (opzionale):</label>
-    <textarea name="user_directive" rows="2" placeholder="Es. Imposta prezzo a 16.50 €, evidenzia la nota d'arancia e il metodo anaerobico..."></textarea>
-    <button type="submit" class="btn-primary" style="background: #8e44ad;">🚀 Estrai, Ottimizza e Crea Prodotto</button>
+    <label>Link scheda fornitore:</label>
+    <input type="text" name="product_link" placeholder="https://..." required />
+    <label>Direttiva personalizzata (opzionale):</label>
+    <textarea name="user_directive" rows="2"></textarea>
+    <button type="submit" class="btn-primary" style="background: #8e44ad;">🚀 Estrai e Crea</button>
     </form>
     </div>
 
-    <!-- Sezione 1: HowTo -->
     <div class="card">
     <h3>1. Inserimento HowTo per ID Prodotto Esistente</h3>
     <form action="/prepare-product-by-id" method="get">
-    <label>ID Prodotto Caffè (Shopify):</label>
-    <input type="text" name="product_id" placeholder="Inserisci l'ID..." required />
-    <label>La tua direttiva personalizzata (opzionale):</label>
-    <textarea name="user_directive" rows="2" placeholder="Es. Enfatizza la moka napoletana..."></textarea>
-    <button type="submit" class="btn-primary">🔍 Cerca e Genera HowTo</button>
+    <label>ID Prodotto:</label>
+    <input type="text" name="product_id" required />
+    <label>Direttiva:</label>
+    <textarea name="user_directive" rows="2"></textarea>
+    <button type="submit" class="btn-primary">🔍 Genera HowTo</button>
     </form>
     </div>
 
-    <!-- Sezione 2: Merchandising -->
     <div class="card">
-    <h3>2. Suggerisci Merchandising in Metafield (Prodotti Complementari)</h3>
+    <h3>2. Suggerisci Merchandising (Metafield)</h3>
     <form action="/prepare-merchandising-by-id" method="get">
-    <label>ID Prodotto Caffè (Shopify):</label>
-    <input type="text" name="product_id" placeholder="Inserisci l'ID del caffè..." required />
-    <label>La tua direttiva personalizzata (opzionale):</label>
-    <textarea name="user_directive" rows="2" placeholder="Es. Abbina tazze in ceramica..."></textarea>
-    <button type="submit" class="btn-primary" style="background: #e67e22;">🎁 Suggerisci Merchandising (Metafield)</button>
+    <label>ID Prodotto Caffè:</label>
+    <input type="text" name="product_id" required />
+    <label>Direttiva:</label>
+    <textarea name="user_directive" rows="2"></textarea>
+    <button type="submit" class="btn-primary" style="background: #e67e22;">🎁 Suggerisci</button>
     </form>
     </div>
 
-    <!-- Sezione 3: Blog -->
     <div class="card">
-    <h3>3. Generatore Articoli Blog & Spunti Strategici</h3>
+    <h3>3. Generatore Articoli Blog</h3>
     {ideas_html}
     <form action="/prepare-blog" method="post" style="margin-top: 15px;">
-    <label>Oppure scrivi un argomento personalizzato:</label>
-    <input type="text" name="topic" placeholder="es. Metodi di estrazione specialty" required />
-    <label>La tua direttiva personalizzata (opzionale):</label>
-    <textarea name="user_directive" rows="2" placeholder="Es. Mantieni un tono molto tecnico..."></textarea>
-    <button type="submit" class="btn-primary" style="background: #27ae60;">✍️ Genera Bozza Blog Professionale</button>
+    <label>Argomento personalizzato:</label>
+    <input type="text" name="topic" required />
+    <label>Direttiva:</label>
+    <textarea name="user_directive" rows="2"></textarea>
+    <button type="submit" class="btn-primary" style="background: #27ae60;">✍️ Genera Bozza</button>
     </form>
     </div>
 
-    </div>
-    </body>
-    </html>
+    </div></body></html>
     """
 
 @app.post("/prepare-new-product", response_class=HTMLResponse)
@@ -669,33 +422,15 @@ def prepare_new_product(product_link: str = Form(...), user_directive: str = For
     try:
         scraped_text = agent.scrape_url_content(product_link)
         product_data = agent.parse_new_product_from_source(scraped_text, user_directive=user_directive)
-        
         draft_id = f"new_prod_{random.randint(10000, 99999)}"
-        PENDING_APPROVALS[draft_id] = {
-            "type": "new_product",
-            "data": product_data
-        }
-
-        return f"""
-        <html><head><title>Revisione Nuovo Prodotto</title></head>
-        <body style="font-family: Arial; background: #f4f6f8; padding: 30px;">
-        <div style="max-width: 900px; margin: auto; background: white; padding: 30px; border-radius: 12px;">
-        <h2>✨ Revisione Nuovo Prodotto Ottimizzato per Shopify</h2>
-        <p style="color: #8e44ad; font-weight: bold;">Estratto da: {product_link}</p>
-        <hr style="border:0; border-top: 1px solid #eaeaea; margin: 20px 0;">
-        <h3 style="color: #2c3e50;">{product_data.get('title')}</h3>
-        <p><strong>Vendor:</strong> {product_data.get('vendor')} | <strong>Tipo:</strong> {product_data.get('product_type')} | <strong>Prezzo:</strong> € {product_data.get('price')}</p>
-        <p><strong>Tag:</strong> {product_data.get('tags')}</p>
-        <div style="background: #f9f9f9; padding: 20px; border-radius: 6px; border: 1px solid #eee; margin: 20px 0; max-height: 350px; overflow-y: auto;">
-        {product_data.get('body_html')}
-        </div>
-        <form action="/approve" method="post" style="display:inline;">
-        <input type="hidden" name="draft_id" value="{draft_id}">
-        <button type="submit" style="background: #8e44ad; color: white; padding: 12px 20px; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;">🚀 Crea Prodotto su Shopify</button>
-        </form>
-        <a href="/" style="margin-left: 15px; text-decoration: none; color: #666; font-weight: bold;">Annulla</a>
-        </div></body></html>
-        """
+        PENDING_APPROVALS[draft_id] = {"type": "new_product", "data": product_data}
+        return f"""<html><body style="font-family: Arial; padding: 30px;"><div style="max-width:900px; margin:auto;">
+        <h2>✨ Revisione Nuovo Prodotto</h2>
+        <h3>{product_data.get('title')}</h3>
+        <p>Prezzo: € {product_data.get('price')} | Tag: {product_data.get('tags')}</p>
+        <div style="background:#f9f9f9; padding:15px; border:1px solid #eee;">{product_data.get('body_html')}</div>
+        <form action="/approve" method="post" style="margin-top:20px;"><input type="hidden" name="draft_id" value="{draft_id}"><button type="submit" style="background:#8e44ad; color:white; padding:10px 20px; border:none; border-radius:6px;">🚀 Approva e Crea su Shopify</button></form>
+        <a href="/">Annulla</a></div></body></html>"""
     except Exception as e:
         return JSONResponse(status_code=500, content={"detail": str(e)})
 
@@ -704,37 +439,15 @@ def prepare_product_by_id(product_id: str, user_directive: str = ""):
     try:
         prod = agent.get_product_by_id(product_id)
         if not prod:
-            return "<html><body style='font-family: Arial; padding: 40px; text-align: center;'><h3>Prodotto non trovato!</h3><a href='/'>← Torna alla Dashboard</a></body></html>"
-            
+            return "<html><body>Prodotto non trovato! <a href='/'>Indietro</a></body></html>"
         update_data = agent.append_howto_to_product(prod, user_directive=user_directive)
-        if not update_data:
-            raise Exception("Impossibile generare i dati HowTo.")
-            
-        draft_id = "prod_" + str(prod.get("id"))
-        PENDING_APPROVALS[draft_id] = {
-            "type": "product",
-            "product_id": prod.get("id"),
-            "data": update_data
-        }
-        
-        card_html = (
-            '<div style="background: #fff; border: 1px solid #e1e4e8; border-radius: 8px; padding: 20px; margin-bottom: 25px;">'
-            '<h3 style="color: #2c3e50; margin-top: 0;">' + str(prod.get("title")) + ' (ID: ' + str(prod.get("id")) + ')</h3>'
-            f'<p style="font-size: 13px; color: #2980b9; font-weight: bold;">💬 Tua direttiva applicata: {user_directive if user_directive else "Nessuna"}</p>'
-            '<div style="background: #f9f9f9; padding: 15px; border-radius: 6px; border: 1px solid #eee; max-height: 250px; overflow-y: auto; margin: 15px 0; font-size: 13px;">' + str(update_data.get("body_html")) + '</div>'
-            '<form action="/approve" method="post" style="display:inline;">'
-            '<input type="hidden" name="draft_id" value="' + str(draft_id) + '">'
-            '<button type="submit" style="background: #10b981; color: white; padding: 10px 18px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold;">✅ Approva e Aggiorna su Shopify</button>'
-            '</form></div>'
-        )
-
-        return (
-            "<html><head><title>Revisione HowTo</title></head>"
-            "<body style=\"font-family: Arial; background: #f4f6f8; padding: 30px;\">"
-            "<div style=\"max-width: 900px; margin: auto;\">"
-            "<h2>📋 Revisione Inserimento HowTo</h2><a href=\"/\">← Torna alla Dashboard</a>"
-            + card_html + "</div></body></html>"
-        )
+        draft_id = f"prod_{product_id}"
+        PENDING_APPROVALS[draft_id] = {"type": "product", "product_id": product_id, "data": update_data}
+        return f"""<html><body style="font-family: Arial; padding: 30px;"><div style="max-width:900px; margin:auto;">
+        <h2>📋 Revisione HowTo</h2><h3>{prod.get('title')}</h3>
+        <div style="background:#f9f9f9; padding:15px; border:1px solid #eee;">{update_data.get('body_html')}</div>
+        <form action="/approve" method="post" style="margin-top:20px;"><input type="hidden" name="draft_id" value="{draft_id}"><button type="submit" style="background:#10b981; color:white; padding:10px 20px; border:none; border-radius:6px;">✅ Approva e Aggiorna</button></form>
+        <a href="/">Annulla</a></div></body></html>"""
     except Exception as e:
         return JSONResponse(status_code=500, content={"detail": str(e)})
 
@@ -742,36 +455,14 @@ def prepare_product_by_id(product_id: str, user_directive: str = ""):
 def prepare_merchandising_by_id(product_id: str, user_directive: str = ""):
     try:
         res = agent.suggest_merchandising_for_product(product_id, user_directive=user_directive)
-        draft_id = "merch_" + str(res.get("product_id"))
-        PENDING_APPROVALS[draft_id] = {
-            "type": "merchandising",
-            "product_id": res.get("product_id"),
-            "selected_ids": res.get("selected_ids")
-        }
-
-        chosen_items_html = ""
-        for item in res.get("chosen_details", []):
-            chosen_items_html += '<li style="margin-bottom: 6px;"><strong>' + str(item.get("title")) + '</strong> <span style="color: #666; font-size: 12px;">(ID: ' + str(item.get("id")) + ')</span></li>'
-
-        card_html = (
-            '<div style="background: #fff; border: 1px solid #e1e4e8; border-radius: 8px; padding: 20px; margin-bottom: 25px;">'
-            '<h3 style="color: #2c3e50; margin-top: 0;">' + str(res.get("title")) + ' (ID: ' + str(res.get("product_id")) + ')</h3>'
-            f'<p style="font-size: 13px; color: #2980b9; font-weight: bold;">💬 Tua direttiva applicata: {user_directive if user_directive else "Nessuna"}</p>'
-            '<p style="font-size: 13px; color: #e67e22; font-weight: bold;">💡 Analisi IA per i Metafield: ' + str(res.get("summary")) + '</p>'
-            '<ul style="padding-left: 20px; font-size: 13px; color: #444;">' + chosen_items_html + '</ul>'
-            '<form action="/approve" method="post" style="margin-top: 20px; display:inline;">'
-            '<input type="hidden" name="draft_id" value="' + str(draft_id) + '">'
-            '<button type="submit" style="background: #e67e22; color: white; padding: 10px 18px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold;">✅ Salva nei Metafield su Shopify</button>'
-            '</form></div>'
-        )
-
-        return (
-            "<html><head><title>Revisione Merchandising</title></head>"
-            "<body style=\"font-family: Arial; background: #f4f6f8; padding: 30px;\">"
-            "<div style=\"max-width: 900px; margin: auto;\">"
-            "<h2>🎁 Revisione Collegamento Metafield</h2><a href=\"/\">← Torna alla Dashboard</a>"
-            + card_html + "</div></body></html>"
-        )
+        draft_id = f"merch_{product_id}"
+        PENDING_APPROVALS[draft_id] = {"type": "merchandising", "product_id": product_id, "selected_ids": res.get("selected_ids")}
+        items_li = "".join([f"<li>{item.get('title')}</li>" for item in res.get("chosen_details", [])])
+        return f"""<html><body style="font-family: Arial; padding: 30px;"><div style="max-width:900px; margin:auto;">
+        <h2>🎁 Revisione Merchandising</h2><h3>{res.get('title')}</h3>
+        <p><b>Analisi:</b> {res.get('summary')}</p><ul>{items_li}</ul>
+        <form action="/approve" method="post" style="margin-top:20px;"><input type="hidden" name="draft_id" value="{draft_id}"><button type="submit" style="background:#e67e22; color:white; padding:10px 20px; border:none; border-radius:6px;">✅ Salva Metafield</button></form>
+        <a href="/">Annulla</a></div></body></html>"""
     except Exception as e:
         return JSONResponse(status_code=500, content={"detail": str(e)})
 
@@ -779,70 +470,41 @@ def prepare_merchandising_by_id(product_id: str, user_directive: str = ""):
 def prepare_blog(topic: str = Form(...), user_directive: str = Form("")):
     try:
         blog_data = agent.prepare_blog_post(topic, user_directive=user_directive)
-        if not blog_data:
-            raise Exception("Impossibile generare la bozza dell'articolo.")
-            
-        draft_id = "blog_" + str(abs(hash(topic)))
-        PENDING_APPROVALS[draft_id] = {
-            "type": "blog",
-            "data": blog_data
-        }
-
-        return (
-            "<html><head><title>Revisione Articolo Blog</title></head>"
-            "<body style=\"font-family: Arial; background: #f4f6f8; padding: 30px;\">"
-            "<div style=\"max-width: 900px; margin: auto; background: white; padding: 30px; border-radius: 12px;\">"
-            "<h2>✍️ Revisione Bozza Articolo Blog Professionale</h2>"
-            f"<p style='color: #2980b9; font-weight: bold;'>💬 Tua direttiva applicata: {user_directive if user_directive else 'Nessuna'}</p>"
-            "<hr style=\"border:0; border-top: 1px solid #eaeaea; margin: 20px 0;\">"
-            "<h3 style=\"color: #2c3e50;\">" + str(blog_data.get('title', '')) + "</h3>"
-            "<p><strong>Estratto:</strong> " + str(blog_data.get('summary', '')) + "</p>"
-            "<div style=\"background: #f9f9f9; padding: 20px; border-radius: 6px; border: 1px solid #eee; margin: 20px 0; max-height: 350px; overflow-y: auto;\">"
-            + str(blog_data.get('body_html', '')) +
-            "</div>"
-            "<form action=\"/approve\" method=\"post\" style=\"display:inline;\">"
-            "<input type=\"hidden\" name=\"draft_id\" value=\"" + str(draft_id) + "\">"
-            "<button type=\"submit\" style=\"background: #10b981; color: white; padding: 12px 20px; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;\">🚀 Approva e Pubblica</button>"
-            "</form>"
-            "<a href=\"/\" style=\"margin-left: 15px; text-decoration: none; color: #666; font-weight: bold;\">Annulla</a>"
-            "</div></body></html>"
-        )
+        draft_id = f"blog_{abs(hash(topic))}"
+        PENDING_APPROVALS[draft_id] = {"type": "blog", "data": blog_data}
+        return f"""<html><body style="font-family: Arial; padding: 30px;"><div style="max-width:900px; margin:auto;">
+        <h2>✍️ Revisione Articolo Blog</h2><h3>{blog_data.get('title')}</h3>
+        <p><b>Sommario:</b> {blog_data.get('summary')}</p>
+        <div style="background:#f9f9f9; padding:15px; border:1px solid #eee;">{blog_data.get('body_html')}</div>
+        <form action="/approve" method="post" style="margin-top:20px;"><input type="hidden" name="draft_id" value="{draft_id}"><button type="submit" style="background:#10b981; color:white; padding:10px 20px; border:none; border-radius:6px;">🚀 Approva e Pubblica</button></form>
+        <a href="/">Annulla</a></div></body></html>"""
     except Exception as e:
         return JSONResponse(status_code=500, content={"detail": str(e)})
 
 @app.post("/approve", response_class=HTMLResponse)
 def approve_draft(draft_id: str = Form(...)):
     if draft_id not in PENDING_APPROVALS:
-        return "<html><body style='font-family: Arial; padding: 40px; text-align: center;'><h3>Bozza non trovata o scaduta.</h3><a href='/'>← Torna alla Dashboard</a></body></html>"
-    
+        return "<html><body>Bozza scaduta o non trovata. <a href='/'>Torna alla Dashboard</a></body></html>"
     item = PENDING_APPROVALS.pop(draft_id)
-    item_type = item.get("type")
-
+    t = item.get("type")
     try:
-        if item_type == "new_product":
+        if t == "new_product":
             created = agent.create_shopify_product(item.get("data"))
-            msg = f"Nuovo prodotto '{created.get('title')}' creato e ottimizzato con successo su Shopify!"
-        elif item_type == "product":
-            success = agent.update_product_description_and_howto(item.get("product_id"), item.get("data"))
-            if not success: raise Exception("Errore salvataggio su Shopify.")
-            msg = "Blocco HowTo aggiunto con successo!"
-        elif item_type == "merchandising":
-            success = agent.update_product_merchandising_metafields(item.get("product_id"), item.get("selected_ids"))
-            if not success: raise Exception("Errore salvataggio metafield.")
-            msg = "Prodotti di merchandising collegati con successo nei metafield!"
-        elif item_type == "blog":
-            pub_res = agent.publish_blog_post(item.get("data"))
+            msg = f"Prodotto '{created.get('title')}' creato con successo!"
+        elif t == "product":
+            agent.update_product_description_and_howto(item.get("product_id"), item.get("data"))
+            msg = "HowTo aggiunto con successo!"
+        elif t == "merchandising":
+            agent.update_product_merchandising_metafields(item.get("product_id"), item.get("selected_ids"))
+            msg = "Metafield di merchandising salvati!"
+        elif t == "blog":
+            agent.publish_blog_post(item.get("data"))
             msg = "Articolo pubblicato con successo!"
         else:
-            raise Exception("Tipo non riconosciuto.")
-
-        return (
-            "<html><body style=\"font-family: Arial; padding: 40px; text-align: center; background: #f4f6f8;\">"
-            "<div style=\"max-width: 600px; margin: auto; background: white; padding: 30px; border-radius: 12px;\">"
-            "<h2 style=\"color: #10b981;\">Operazione completata con successo!</h2>"
-            "<p>" + msg + "</p>"
-            "<div style=\"margin-top: 25px;\"><a href=\"/\" style=\"background: #2c3e50; color: white; padding: 10px 20px; border-radius: 6px; text-decoration: none; font-weight: bold;\">← Torna alla Dashboard</a></div>"
-            "</div></body></html>"
-        )
+            msg = "Operazione completata."
+        return f"""<html><body style="font-family: Arial; padding: 40px; text-align: center;"><div style="max-width:600px; margin:auto; background:white; padding:30px; border-radius:12px;">
+        <h2 style="color:#10b981;">Operazione riuscita!</h2><p>{msg}</p>
+        <br><a href="/" style="background:#2c3e50; color:white; padding:10px 20px; text-decoration:none; border-radius:6px;">← Torna alla Dashboard</a>
+        </div></body></html>"""
     except Exception as e:
         return JSONResponse(status_code=500, content={"detail": str(e)})

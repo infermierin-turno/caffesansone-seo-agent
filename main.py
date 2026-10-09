@@ -159,7 +159,6 @@ class ShopifyCoffeeAgent:
             with urlopen(req, timeout=10) as response:
                 html = response.read().decode('utf-8', errors='ignore')
             
-            # Pulizia basilare dei tag HTML tramite regex per estrarre il testo utile
             clean_html = re.sub(r'<script.*?>.*?</script>', '', html, flags=re.DOTALL)
             clean_html = re.sub(r'<style.*?>.*?</style>', '', clean_html, flags=re.DOTALL)
             text = re.sub(r'<[^>]+>', ' ', clean_html)
@@ -268,8 +267,7 @@ Restituisci ESCLUSIVAMENTE un oggetto JSON con:
             return prod_node
         else:
             raise Exception(f"Errore HTTP Shopify: {response.status_code} - {response.text}")
-
-    def append_howto_to_product(self, product_data, user_directive=""):
+            def append_howto_to_product(self, product_data, user_directive=""):
         title = product_data.get("title")
         current_body = product_data.get("body_html", "") or ""
         var_list = product_data.get("variants", [])
@@ -308,6 +306,133 @@ Restituisci ESCLUSIVAMENTE un oggetto JSON con:
         except Exception as e:
             print("Errore HowTo: " + str(e))
             return None
+
+    def update_product_image_alt_texts(self, product_id, product_title):
+        graphql_url = self.shop_url + "/admin/api/2024-07/graphql.json"
+        query_images = "{\n  product(id: \"gid://shopify/Product/" + str(product_id) + "\") {\n    images(first: 10) {\n      edges {\n        node {\n          id\n          url\n        }\n      }\n    }\n  }\n}"
+        resp = requests.post(graphql_url, json={"query": query_images}, headers=self.headers)
+        if resp.status_code != 200:
+            return False
+        edges = resp.json().get("data", {}).get("product", {}).get("images", {}).get("edges", [])
+        if not edges:
+            return True
+
+        mutation_alt = """
+        mutation productUpdateMedia($media: [CreateMediaInput!]!,$productId: ID!) {
+          productUpdateMedia(media: $media, productId:$productId) {
+            media {
+              id
+              alt
+            }
+            userErrors {
+              field
+              message
+            }
+          }
+        }
+        """
+        media_inputs = []
+        for i, edge in enumerate(edges):
+            img_id = edge.get("node", {}).get("id")
+            alt_text = str(product_title) + " - Caffè Specialty Sansone Vista " + str(i + 1)
+            media_inputs.append({
+                "id": img_id,
+                "alt": alt_text,
+                "mediaContentType": "IMAGE"
+            })
+        variables = {
+            "productId": "gid://shopify/Product/" + str(product_id),
+            "media": media_inputs
+        }
+        requests.post(graphql_url, json={"query": mutation_alt, "variables": variables}, headers=self.headers)
+        return True
+
+    def update_product_description_and_howto(self, product_id, update_data, tag_to_add="HowTo Ottimizzato"):
+        graphql_url = self.shop_url + "/admin/api/2024-07/graphql.json"
+        get_query = "{\n  product(id: \"gid://shopify/Product/" + str(product_id) + "\") {\n    title\n    tags\n  }\n}"
+        resp = requests.post(graphql_url, json={"query": get_query}, headers=self.headers)
+        tags_list = []
+        product_title = "Caffè Specialty"
+        if resp.status_code == 200:
+            node = resp.json().get("data", {}).get("product", {})
+            if node:
+                product_title = node.get("title", product_title)
+                if node.get("tags"):
+                    tags_list = node.get("tags")
+        
+        if tag_to_add not in tags_list:
+            tags_list.append(tag_to_add)
+
+        mutation = """
+        mutation productUpdate($input: ProductInput!) {
+          productUpdate(input: $input) {
+            product {
+              id
+              title
+            }
+            userErrors {
+              field
+              message
+            }
+          }
+        }
+        """
+        variables = {
+            "input": {
+                "id": "gid://shopify/Product/" + str(product_id),
+                "descriptionHtml": update_data.get("body_html"),
+                "tags": tags_list
+            }
+        }
+        response = requests.post(graphql_url, json={"query": mutation, "variables": variables}, headers=self.headers)
+        if response.status_code == 200:
+            result_data = response.json()
+            user_errors = result_data.get("data", {}).get("productUpdate", {}).get("userErrors", [])
+            if user_errors:
+                return False
+            
+            metafields_to_set = []
+            howto_obj = update_data.get("howto_schema")
+            if howto_obj:
+                metafields_to_set.append({
+                    "ownerId": "gid://shopify/Product/" + str(product_id),
+                    "namespace": "custom",
+                    "key": "how_to_schema",
+                    "type": "json",
+                    "value": json.dumps(howto_obj, ensure_ascii=False)
+                })
+
+            if metafields_to_set:
+                metafield_mutation = """
+                mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+                  metafieldsSet(metafields: $metafields) {
+                    metafields {
+                      id
+                      namespace
+                      key
+                      value
+                    }
+                    userErrors {
+                      field
+                      message
+                      code
+                    }
+                  }
+                }
+                """
+                metafield_variables = {"metafields": metafields_to_set}
+                meta_resp = requests.post(graphql_url, json={"query": metafield_mutation, "variables": metafield_variables}, headers=self.headers)
+                meta_json = meta_resp.json()
+                if "errors" in meta_json:
+                    return False
+                meta_errors = meta_json.get("data", {}).get("metafieldsSet", {}).get("userErrors", [])
+                if meta_errors:
+                    return False
+
+            self.update_product_image_alt_texts(product_id, product_title)
+            return True
+        else:
+            return False
 
     def suggest_merchandising_for_product(self, product_id, user_directive=""):
         target_prod = self.get_product_by_id(product_id)

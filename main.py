@@ -267,7 +267,8 @@ Restituisci ESCLUSIVAMENTE un oggetto JSON con:
             return prod_node
         else:
             raise Exception(f"Errore HTTP Shopify: {response.status_code} - {response.text}")
-            def append_howto_to_product(self, product_data, user_directive=""):
+
+    def append_howto_to_product(self, product_data, user_directive=""):
         title = product_data.get("title")
         current_body = product_data.get("body_html", "") or ""
         var_list = product_data.get("variants", [])
@@ -571,8 +572,7 @@ RESTUISCI UN JSON con: "title", "summary", "body_html", "tags".
         if user_errors:
             raise Exception(f"Errore Shopify blog: {user_errors[0].get('message')}")
         return res_json.get("data", {}).get("articleCreate", {}).get("article", {})
-
-shop_url = os.getenv("SHOP_URL", "https://348aca-2.myshopify.com")
+        shop_url = os.getenv("SHOP_URL", "https://348aca-2.myshopify.com")
 openai_api_key = os.getenv("OPENAI_API_KEY", "")
 client_id = os.getenv("SHOPIFY_CLIENT_ID", "")
 client_secret = os.getenv("SHOPIFY_CLIENT_SECRET", "")

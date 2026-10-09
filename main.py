@@ -12,6 +12,12 @@ app = FastAPI()
 
 PENDING_APPROVALS = {}
 
+# 1. DEFINIAMO PRIMA LE VARIABILI D'AMBIENTE
+shop_url = os.getenv("SHOP_URL", "https://348aca-2.myshopify.com")
+openai_api_key = os.getenv("OPENAI_API_KEY", "")
+client_id = os.getenv("SHOPIFY_CLIENT_ID", "")
+client_secret = os.getenv("SHOPIFY_CLIENT_SECRET", "")
+
 class ShopifyCoffeeAgent:
     def __init__(self, shop_url, openai_api_key, client_id=None, client_secret=None, **kwargs):
         self.shop_url = shop_url.rstrip('/')
@@ -318,10 +324,13 @@ Restituisci ESCLUSIVAMENTE un JSON con: title, body_html, tags, vendor ("Caffè 
     def publish_blog_post(self, blog_data: dict):
         graphql_url = self.shop_url + "/admin/api/2024-07/graphql.json"
         blogs_resp = requests.post(graphql_url, json={"query": "{ blogs(first: 1) { edges { node { id } } } }"}, headers=self.headers)
-        blog_id = blogs_resp.json().get("data", {}).get("blogs", {}).get("edges", [])[0]["node"]["id"]
+        edges = blogs_resp.json().get("data", {}).get("blogs", {}).get("edges", [])
+        if not edges:
+            raise Exception("Nessun blog trovato su Shopify. Crea prima un blog nella sezione Contenuti del pannello Shopify.")
+        blog_id = edges[0]["node"]["id"]
         mutation = """
-        mutation articleCreate($article: ArticleCreateInput!, $blogId: ID!) {
-          articleCreate(article: $article, blogId: $blogId) {
+        mutation articleCreate($article: ArticleCreateInput!,$blogId: ID!) {
+          articleCreate(article: $article, blogId:$blogId) {
             article { id title }
             userErrors { field message }
           }
@@ -339,11 +348,8 @@ Restituisci ESCLUSIVAMENTE un JSON con: title, body_html, tags, vendor ("Caffè 
         }
         resp = requests.post(graphql_url, json={"query": mutation, "variables": variables}, headers=self.headers)
         return resp.json().get("data", {}).get("articleCreate", {}).get("article", {})
-        shop_url = os.getenv("SHOP_URL", "https://348aca-2.myshopify.com")
-openai_api_key = os.getenv("OPENAI_API_KEY", "")
-client_id = os.getenv("SHOPIFY_CLIENT_ID", "")
-client_secret = os.getenv("SHOPIFY_CLIENT_SECRET", "")
 
+# 2. ISTANZIAMO L'AGENTE ORA CHE `shop_url` ESISTE
 agent = ShopifyCoffeeAgent(shop_url=shop_url, openai_api_key=openai_api_key, client_id=client_id, client_secret=client_secret)
 
 @app.get("/", response_class=HTMLResponse)

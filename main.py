@@ -2,8 +2,9 @@ import os
 import json
 import random
 import requests
-from bs4 import BeautifulSoup
-from fastapi import FastAPI, HTTPException, Request, Form
+import re
+from urllib.request import Request, urlopen
+from fastapi import FastAPI, HTTPException, Request as FastAPIRequest, Form
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from openai import OpenAI
 
@@ -154,20 +155,18 @@ class ShopifyCoffeeAgent:
 
     def scrape_url_content(self, url: str):
         try:
-            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-            resp = requests.get(url, headers=headers, timeout=10)
-            if resp.status_code != 200:
-                return f"Impossibile leggere il link (Status Code: {resp.status_code})"
-            soup = BeautifulSoup(resp.text, 'html.parser')
-            for script in soup(["script", "style", "nav", "footer", "header"]):
-                script.decompose()
-            text = soup.get_text(separator=' ')
-            lines = (line.strip() for line in text.splitlines())
-            chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-            clean_text = '\n'.join(chunk for chunk in chunks if chunk)
-            return clean_text[:8000]
+            req = Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+            with urlopen(req, timeout=10) as response:
+                html = response.read().decode('utf-8', errors='ignore')
+            
+            # Pulizia basilare dei tag HTML tramite regex per estrarre il testo utile
+            clean_html = re.sub(r'<script.*?>.*?</script>', '', html, flags=re.DOTALL)
+            clean_html = re.sub(r'<style.*?>.*?</style>', '', clean_html, flags=re.DOTALL)
+            text = re.sub(r'<[^>]+>', ' ', clean_html)
+            text = ' '.join(text.split())
+            return text[:8000]
         except Exception as e:
-            return f"Errore durante lo scraping del link: {str(e)}"
+            return f"Errore durante la lettura del link: {str(e)}"
 
     def parse_new_product_from_source(self, source_text: str, user_directive: str = ""):
         system_prompt = f"""Sei il maestro torrefattore ed esperto di marketing per Caffè Sansone di Napoli.
